@@ -76,6 +76,7 @@
 
     # Don't force to include <type_traits> when using move assignement of File
     {symbol: ["std::remove_reference<chemfiles::XDRFile &>::type", "private", "\"chemfiles/files/XDRFile.hpp\"", "public"]},
+    {symbol: ["std::remove_reference<chemfiles::BINFile &>::type", "private", "\"chemfiles/files/BINFile.hpp\"", "public"]},
 
     # Don't force to include <functional> when using chemfiles::shared_allocator
     {symbol: ["std::__function::__base", "private", "<functional>", "public"]},

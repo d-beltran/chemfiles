@@ -154,6 +154,9 @@ public:
     /// @throws FormatError if the format does not support writing.
     void write(const Frame& frame);
 
+    /// Set the number of atoms in the format
+    void set_natoms(size_t natoms);
+
     /// Use the given `topology` instead of any pre-existing `Topology` when
     /// reading or writing.
     ///

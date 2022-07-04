@@ -603,6 +603,9 @@ void LittleEndianFile::read_f32(float* data, size_t count) {
     read_as_little_endian(data, count);
 }
 
+// void LittleEndianFile::read_f32_accurate(float* data, size_t count) {
+//     file_.read((char*)&data, count);
+// }
 
 void LittleEndianFile::read_f64(double* data, size_t count) {
     read_as_little_endian(data, count);

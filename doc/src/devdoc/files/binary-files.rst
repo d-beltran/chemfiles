@@ -15,3 +15,6 @@ Binary files implementations
 
 .. doxygenclass:: chemfiles::XDRFile
     :members:
+
+.. doxygenclass:: chemfiles::BINFile
+    :members:

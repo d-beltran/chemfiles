@@ -41,6 +41,7 @@
 #include "chemfiles/formats/TRR.hpp"
 #include "chemfiles/formats/XTC.hpp"
 #include "chemfiles/formats/CIF.hpp"
+#include "chemfiles/formats/BIN.hpp"
 
 #define SENTINEL_INDEX (static_cast<size_t>(-1))
 
@@ -87,6 +88,7 @@ FormatFactory::FormatFactory() {
     this->add_format<TRRFormat>();
     this->add_format<XTCFormat>();
     this->add_format<XYZFormat>();
+    this->add_format<BINFormat>();
 }
 
 FormatFactory& FormatFactory::get() {

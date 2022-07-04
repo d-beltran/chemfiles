@@ -95,6 +95,9 @@ public:
     ///
     /// @return The number of frames
     virtual size_t nsteps() = 0;
+
+    /// Set the numbr of atoms in the format
+    virtual void set_natoms(size_t natoms);
 };
 
 /// The `TextFormat` class defines a common, simpler interface for text based

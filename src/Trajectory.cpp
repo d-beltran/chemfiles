@@ -236,6 +236,13 @@ void Trajectory::write(const Frame& frame) {
     nsteps_++;
 }
 
+void Trajectory::set_natoms(size_t natoms) {
+    check_opened();
+    format_->set_natoms(natoms);
+    // Reset the nsteps now that the number of atoms has changed
+    nsteps_ = format_->nsteps();
+}
+
 void Trajectory::set_topology(const Topology& topology) {
     check_opened();
     custom_topology_ = topology;

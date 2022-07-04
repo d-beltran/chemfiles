@@ -47,6 +47,13 @@ void Format::write(const Frame& /*unused*/) {
     );
 }
 
+void Format::set_natoms(size_t natoms /*unused*/) {
+    throw format_error(
+        "'set_natoms' is not implemented for this format ({})",
+        typeid(*this).name()
+    );
+}
+
 void TextFormat::read_next(Frame& /*unused*/) {
     throw format_error(
         "'read' is not implemented for this format ({})",
