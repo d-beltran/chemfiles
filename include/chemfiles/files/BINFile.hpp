@@ -22,11 +22,6 @@ namespace chemfiles {
       BINFile(std::string path, File::Mode mode);
       ~BINFile() = default;
 
-      //using BinaryFile::read_f32_accurate;
-      using BinaryFile::file_size;
-
-      void read_f32_accurate(float* data);
-
     private:
       std::fstream file_stream;
   };

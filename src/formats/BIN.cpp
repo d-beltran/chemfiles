@@ -59,13 +59,13 @@ void BINFormat::read(Frame& frame) {
     for (size_t i = 0; i < n_atoms; i++) {
         double x = 0, y = 0, z = 0;
         // Get the next coordinate (x)
-        file_.read_f32_accurate(&buffer);
+        file_.read_f32(&buffer, 1); // 1 stands for 4 bytes already
         x = static_cast<double>(buffer);
         // Get the next coordinate (y)
-        file_.read_f32_accurate(&buffer);
+        file_.read_f32(&buffer, 1); // 1 stands for 4 bytes already
         y = static_cast<double>(buffer);
         // Get the next coordinate (z)
-        file_.read_f32_accurate(&buffer);
+        file_.read_f32(&buffer, 1); // 1 stands for 4 bytes already
         z = static_cast<double>(buffer);
         // Add coordinates to the current frame position
         positions[i][0] = static_cast<double>(x);
@@ -75,15 +75,6 @@ void BINFormat::read(Frame& frame) {
 }
 
 size_t BINFormat::nsteps() { return file_.file_size() / bytes_per_frame; }
-
-// size_t BINFormat::natoms(Frame& frame) {
-//     std::cout << "--- Current natoms ---" << n_atoms << std::endl;
-//     // If the number of atoms has been previously calculated then return it
-//     if (n_atoms != 0) return n_atoms;
-//     std::cout << "--- CALCULATING ATOMS ---" << n_atoms << std::endl;
-//     // Otherwise, find the number of atoms in the topology of the provided frame
-//     return frame.topology().size();
-// }
 
 void BINFormat::set_natoms(size_t natoms) {
     // Set the number of atoms

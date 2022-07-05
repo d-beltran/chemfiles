@@ -24,12 +24,3 @@ BINFile::BINFile(std::string path, File::Mode mode) : LittleEndianFile(std::move
         std::cout << "Unable to open the file " << file_path << std::endl;
     }
 }
-
-// A 32 bit float will always size 4 bytes
-int f32_byte_size = 4;
-// Read the next 32 bit float in the file stream
-// NEVER FORGET: We are using our own implementation since the builtin chemfiles read_f32 function from little endian files
-//  has a remarkable accuracy error
-void BINFile::read_f32_accurate(float* data) {
-    file_stream.read((char*)&(*data), f32_byte_size);
-}

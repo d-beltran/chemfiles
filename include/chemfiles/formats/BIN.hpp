@@ -23,7 +23,6 @@
             void read_step(size_t step, Frame& frame) override;
             void read(Frame& frame) override;
             size_t nsteps() override;
-            //size_t natoms(Frame& frame);
             void set_natoms(size_t natoms) override;
 
             size_t n_atoms;
