@@ -11,6 +11,7 @@
 
 static_assert(sizeof(char) == sizeof(int8_t), "char must be 8-bits");
 
+/*
 #if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
 #if (CHEMFILES_SIZEOF_VOID_P == 8)
     // use mmap in 64-bit posix
@@ -22,6 +23,10 @@ static_assert(sizeof(char) == sizeof(int8_t), "char must be 8-bits");
 #else
     #define CHEMFILES_BINARY_FILE_USE_MMAP 0
 #endif
+*/
+
+// We must disable this feature in order to stream out the trajectory writting output
+#define CHEMFILES_BINARY_FILE_USE_MMAP 0
 
 namespace chemfiles {
 

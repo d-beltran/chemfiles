@@ -68,13 +68,18 @@ void BINFormat::read(Frame& frame) {
         file_.read_f32(&buffer, 1); // 1 stands for 4 bytes already
         z = static_cast<double>(buffer);
         // Add coordinates to the current frame position
-        positions[i][0] = static_cast<double>(x);
-        positions[i][1] = static_cast<double>(y);
-        positions[i][2] = static_cast<double>(z);
+        positions[i][0] = x;
+        positions[i][1] = y;
+        positions[i][2] = z;
     }
 }
 
-size_t BINFormat::nsteps() { return file_.file_size() / bytes_per_frame; }
+size_t BINFormat::nsteps() {
+    if (bytes_per_frame == 0) {
+        return 0;
+    }
+    return file_.file_size() / bytes_per_frame;
+}
 
 void BINFormat::set_natoms(size_t natoms) {
     // Set the number of atoms

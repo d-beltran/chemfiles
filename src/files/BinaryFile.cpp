@@ -15,6 +15,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include <iostream>
+
 #ifdef CHEMFILES_WINDOWS
 #include <io.h>
 #endif
@@ -58,14 +60,21 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
         unreachable();
     }
 
+    // If the output filename is "<stdout>" then it means we have to output the result to the terminal
+    bool stdout_mode = this->path() == "<stdout>";
+
 #ifdef CHEMFILES_WINDOWS
     open_mode |= _O_BINARY;
     int permissions = _S_IWRITE;
 #else
     int permissions = S_IRWXU | S_IRWXG | S_IROTH;
 #endif
-
-    auto file_descriptor = open(this->path().c_str(), open_mode, permissions);
+    int file_descriptor = -1;
+    if (stdout_mode) {
+        file_descriptor = fileno(stdout);
+    } else {
+        file_descriptor = open(this->path().c_str(), open_mode, permissions);
+    }
     if (file_descriptor == -1) {
         throw file_error(
             "could not open file at '{}': {}", this->path(), std::strerror(errno)
@@ -124,7 +133,7 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     ));
 
     if (mmap_data_ == MAP_FAILED) {
-        throw file_error("mmap failed for '{}': {}", this->path(), std::strerror(errno));
+        throw file_error("mmap failed (1) for '{}': {}", this->path(), std::strerror(errno));
     }
 #else
     const char* fdopen_mode;
@@ -132,6 +141,10 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
         fdopen_mode = "rb";
     } else {
         fdopen_mode = "r+b";
+    }
+    if (stdout_mode) {
+        assert(this->mode() == File::WRITE);
+        fdopen_mode = "wb";
     }
 
     file_ = fdopen(file_descriptor, fdopen_mode);
@@ -264,7 +277,7 @@ void BinaryFile::write_char(const char* data, size_t count) {
             ));
 
             if (mmap_data_ == MAP_FAILED) {
-                throw file_error("mmap failed for '{}': {}", this->path(), std::strerror(errno));
+                throw file_error("mmap failed (2) for '{}': {}", this->path(), std::strerror(errno));
             }
         }
     }
