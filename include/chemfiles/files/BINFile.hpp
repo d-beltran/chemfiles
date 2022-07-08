@@ -21,9 +21,6 @@ namespace chemfiles {
     public:
       BINFile(std::string path, File::Mode mode);
       ~BINFile() = default;
-
-    private:
-      std::fstream file_stream;
   };
 
 } // namespace chemfiles
