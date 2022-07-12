@@ -61,6 +61,7 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     }
 
     // If the output filename is "<stdout>" then it means we have to output the result to the terminal
+    bool stdin_mode = this->path() == "<stdin>";
     bool stdout_mode = this->path() == "<stdout>";
 
 #ifdef CHEMFILES_WINDOWS
@@ -70,7 +71,10 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     int permissions = S_IRWXU | S_IRWXG | S_IROTH;
 #endif
     int file_descriptor = -1;
-    if (stdout_mode) {
+    if (stdin_mode) {
+        file_descriptor = fileno(stdin);
+    }
+    else if (stdout_mode) {
         file_descriptor = fileno(stdout);
     } else {
         file_descriptor = open(this->path().c_str(), open_mode, permissions);
@@ -141,6 +145,10 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
         fdopen_mode = "rb";
     } else {
         fdopen_mode = "r+b";
+    }
+    if (stdin_mode) {
+        assert(this->mode() == File::READ);
+        fdopen_mode = "rb";
     }
     if (stdout_mode) {
         assert(this->mode() == File::WRITE);
