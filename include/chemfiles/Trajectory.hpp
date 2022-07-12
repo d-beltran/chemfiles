@@ -157,6 +157,9 @@ public:
     /// Set the number of atoms in the format
     void set_natoms(size_t natoms);
 
+    /// Set the number of steps in the trajectory
+    void set_nsteps(size_t nsteps);
+
     /// Use the given `topology` instead of any pre-existing `Topology` when
     /// reading or writing.
     ///

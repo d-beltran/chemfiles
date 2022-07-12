@@ -243,6 +243,11 @@ void Trajectory::set_natoms(size_t natoms) {
     nsteps_ = format_->nsteps();
 }
 
+void Trajectory::set_nsteps(size_t nsteps) {
+    check_opened();
+    nsteps_ = nsteps;
+}
+
 void Trajectory::set_topology(const Topology& topology) {
     check_opened();
     custom_topology_ = topology;
