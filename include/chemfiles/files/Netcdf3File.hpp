@@ -349,6 +349,11 @@ public:
         return n_records_;
     }
 
+    // Set the number of frames/steps/records manually
+    void set_n_records(size_t n_records) {
+        n_records_ = n_records;
+    }
+
     /// get the size in bytes of a full record entry, including all record variables
     uint64_t record_size() const {
         return record_size_;

@@ -475,8 +475,9 @@ Netcdf3File::~Netcdf3File() {
         }
 
         // update the number of records in the header, it is always at byte 4
-        this->seek(4);
-        this->write_single_i32(static_cast<int32_t>(this->n_records_));
+        // DANI: We can not update the begining of the file at this point since we may be streaming
+        // this->seek(4);
+        // this->write_single_i32(static_cast<int32_t>(this->n_records_));
     }
 }
 
@@ -789,7 +790,7 @@ void Netcdf3Builder::initialize(Netcdf3File* file) && {
 
     file->write_char("CDF", 3);
     file->write_single_char(2); // version == 2 for 64-bit offset
-    file->write_single_i32(0);  // record length
+    file->write_single_i32(static_cast<int32_t>(file->n_records_)); // record length
 
     // write dimensions
     file->write_single_i32(constants::NC_DIMENSION);

@@ -81,6 +81,7 @@ public:
     AmberTrajectory(std::string path, File::Mode mode, File::Compression compression);
 
     size_t nsteps() override;
+    void set_nsteps(size_t nsteps) override;
     void initialize(const Frame& frame) override;
 
 private:

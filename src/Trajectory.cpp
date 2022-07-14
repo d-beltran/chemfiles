@@ -246,6 +246,9 @@ void Trajectory::set_natoms(size_t natoms) {
 void Trajectory::set_nsteps(size_t nsteps) {
     check_opened();
     nsteps_ = nsteps;
+    // Change the file number of steps/records/frames as well
+    // This is critical for netcdf at least
+    format_->set_nsteps(nsteps);
 }
 
 void Trajectory::set_topology(const Topology& topology) {

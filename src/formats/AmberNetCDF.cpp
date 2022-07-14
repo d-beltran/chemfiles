@@ -416,6 +416,10 @@ size_t AmberTrajectory::nsteps() {
     return file_.n_records();
 }
 
+void AmberTrajectory::set_nsteps(size_t nsteps) {
+    file_.set_n_records(nsteps);
+}
+
 void AmberTrajectory::validate() {
     auto frame = find_dimension(file_, "frame");
     if (!frame) {

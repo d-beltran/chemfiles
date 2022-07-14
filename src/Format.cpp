@@ -54,6 +54,13 @@ void Format::set_natoms(size_t natoms /*unused*/) {
     );
 }
 
+void Format::set_nsteps(size_t nsteps /*unused*/) {
+    throw format_error(
+        "'set_nsteps' is not implemented for this format ({})",
+        typeid(*this).name()
+    );
+}
+
 void TextFormat::read_next(Frame& /*unused*/) {
     throw format_error(
         "'read' is not implemented for this format ({})",
