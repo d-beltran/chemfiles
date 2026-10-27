@@ -69,6 +69,16 @@ public:
         return stream_;
     }
 
+    /// Keep the data written to an output stream (stdout) in memory until
+    /// `flush_stream` is called. This allows formats that need to seek
+    /// backward while writing (e.g. NetCDF) to be streamed, as long as they
+    /// never seek before the last flushed position.
+    void buffer_stream();
+
+    /// Send all the buffered data before `position` to the output stream. It
+    /// is not possible to seek before `position` afterwards.
+    void flush_stream(uint64_t position);
+
     /// Read exactly `count` char, and store them in the `data` array
     void read_char(char* data, size_t count);
     /// Read exactly as many char as fit in the pre-allocated vector
@@ -356,6 +366,15 @@ private:
 
     /// Is this file reading from stdin or writing to stdout?
     bool stream_ = false;
+
+    /// Is the output stream buffered in memory (see `buffer_stream`)?
+    bool stream_buffered_ = false;
+    /// Data written but not yet sent to the output stream
+    std::vector<char> stream_buffer_;
+    /// Position in the stream of the first byte in `stream_buffer_`
+    uint64_t stream_buffer_start_ = 0;
+    /// Current position in the buffered stream
+    uint64_t stream_position_ = 0;
 
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     int file_descriptor_ = -1;

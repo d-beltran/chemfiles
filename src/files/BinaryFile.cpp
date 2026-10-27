@@ -178,6 +178,10 @@ BinaryFile& BinaryFile::operator=(BinaryFile&& other) noexcept {
     this->close_file();
 
     std::swap(this->stream_, other.stream_);
+    std::swap(this->stream_buffered_, other.stream_buffered_);
+    std::swap(this->stream_buffer_, other.stream_buffer_);
+    std::swap(this->stream_buffer_start_, other.stream_buffer_start_);
+    std::swap(this->stream_position_, other.stream_position_);
 
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     std::swap(this->file_descriptor_, other.file_descriptor_);
@@ -284,6 +288,18 @@ void BinaryFile::close_file() noexcept {
         return;
     }
 
+    if (stream_buffered_ && !stream_buffer_.empty()) {
+        auto written = std::fwrite(stream_buffer_.data(), 1, stream_buffer_.size(), file_);
+        if (written != stream_buffer_.size()) {
+            warning(
+                "binary file writer",
+                "failed to write buffered data to the output stream ({}), some data might be lost",
+                std::strerror(errno)
+            );
+        }
+        stream_buffer_.clear();
+    }
+
     if (this->mode() != Mode::READ) {
         if (std::fflush(file_) != 0) {
             warning("binary file writer", "failed to flush when closing the file, some data might be lost");
@@ -339,6 +355,18 @@ void BinaryFile::read_char(char* data, size_t count) {
 
 
 void BinaryFile::write_char(const char* data, size_t count) {
+    if (stream_buffered_) {
+        auto begin = static_cast<size_t>(stream_position_ - stream_buffer_start_);
+        if (begin + count > stream_buffer_.size()) {
+            // bytes skipped over with seek are filled with zeros, like in a
+            // regular file
+            stream_buffer_.resize(begin + count, '\0');
+        }
+        std::memcpy(stream_buffer_.data() + begin, data, count);
+        stream_position_ += count;
+        return;
+    }
+
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     auto file_size_changed = false;
     while (mmap_offset_ + current_ + count > file_size_) {
@@ -384,6 +412,10 @@ void BinaryFile::write_char(const char* data, size_t count) {
 
 
 uint64_t BinaryFile::tell() const {
+    if (stream_buffered_) {
+        return stream_position_;
+    }
+
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     return mmap_offset_ + current_;
 #else
@@ -397,6 +429,18 @@ uint64_t BinaryFile::tell() const {
 
 
 void BinaryFile::seek(uint64_t position) {
+    if (stream_buffered_) {
+        if (position < stream_buffer_start_) {
+            throw file_error(
+                "can not seek to position {} in output stream: data up to "
+                "position {} has already been written",
+                position, stream_buffer_start_
+            );
+        }
+        stream_position_ = position;
+        return;
+    }
+
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     if (position < mmap_offset_ || position > mmap_offset_ + CHEMFILES_MMAP_SIZE) {
         // find a new offset so positions is in the mapped region
@@ -416,6 +460,11 @@ void BinaryFile::seek(uint64_t position) {
 
 
 void BinaryFile::skip(uint64_t count) {
+    if (stream_buffered_) {
+        stream_position_ += count;
+        return;
+    }
+
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     this->seek(mmap_offset_ + current_ + count);
 #else
@@ -444,6 +493,56 @@ uint64_t BinaryFile::file_size() {
 #endif
 }
 
+void BinaryFile::buffer_stream() {
+    if (!stream_ || this->mode() != File::WRITE) {
+        throw file_error("only output streams can be buffered, '{}' is not one", this->path());
+    }
+#if CHEMFILES_BINARY_FILE_USE_MMAP
+    throw file_error("buffered output streams are not supported with mmap");
+#else
+    if (stream_buffered_) {
+        return;
+    }
+
+    // ftell does not work on pipes, but nothing should have been written to
+    // the stream yet
+    stream_buffered_ = true;
+    stream_buffer_start_ = 0;
+    stream_position_ = 0;
+#endif
+}
+
+void BinaryFile::flush_stream(uint64_t position) {
+    if (!stream_buffered_) {
+        throw file_error("can not flush '{}': this is not a buffered output stream", this->path());
+    }
+#if !CHEMFILES_BINARY_FILE_USE_MMAP
+    if (position < stream_buffer_start_) {
+        throw file_error(
+            "can not flush output stream up to position {}: data up to "
+            "position {} has already been written",
+            position, stream_buffer_start_
+        );
+    }
+
+    auto count = static_cast<size_t>(position - stream_buffer_start_);
+    if (count > stream_buffer_.size()) {
+        // flushing past the end of the written data, fill with zeros
+        stream_buffer_.resize(count, '\0');
+    }
+
+    auto written = std::fwrite(stream_buffer_.data(), 1, count, file_);
+    if (written != count) {
+        throw file_error(
+            "failed to write {} bytes to the file at '{}': {}",
+            count, this->path(), std::strerror(errno)
+        );
+    }
+
+    stream_buffer_.erase(stream_buffer_.begin(), stream_buffer_.begin() + static_cast<std::ptrdiff_t>(count));
+    stream_buffer_start_ = position;
+#endif
+}
 
 /******************************************************************************/
 

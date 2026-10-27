@@ -18,6 +18,7 @@
 #include "chemfiles/external/optional.hpp"
 #include "chemfiles/files/BinaryFile.hpp"
 #include "chemfiles/unreachable.hpp"
+#include "chemfiles/warnings.hpp"
 
 using namespace chemfiles;
 using namespace chemfiles::netcdf3;
@@ -401,7 +402,12 @@ Netcdf3File::Netcdf3File(std::string filename, File::Mode mode):
     BigEndianFile(std::move(filename), mode)
 {
     if (mode == File::WRITE) {
-        // nothing to do for now, the file will be intialized by a Netcdf3Builder
+        if (this->is_stream()) {
+            // the writer seeks backward inside the header and the current
+            // record, so keep them in memory until they are complete
+            this->buffer_stream();
+        }
+        // nothing else to do for now, the file will be intialized by a Netcdf3Builder
         return;
     }
 
@@ -502,10 +508,16 @@ Netcdf3File::~Netcdf3File() {
 
         // update the number of records in the header, it is always at byte 4.
         // This is not possible when streaming to stdout, in which case the
-        // number of records must be set before initializing the file.
+        // number of records was set before initializing the file.
         if (!this->is_stream()) {
             this->seek(4);
             this->write_single_i32(static_cast<int32_t>(this->n_records_));
+        } else if (this->initialized_ && this->n_records_ != this->expected_n_records_) {
+            warning("NetCDF writer",
+                "{} records were announced in the header of '{}', but only {} "
+                "were written: the file is corrupted",
+                this->expected_n_records_, this->path(), this->n_records_
+            );
         }
     }
 }
@@ -763,9 +775,27 @@ optional<Variable&> Netcdf3File::variable(const std::string& name) {
     }
 }
 
+void Netcdf3File::set_n_records(size_t n_records) {
+    if (this->initialized_) {
+        throw file_error(
+            "can not set the number of records in '{}': the file is already initialized",
+            this->path()
+        );
+    }
+    this->expected_n_records_ = static_cast<uint64_t>(n_records);
+}
+
 void Netcdf3File::add_record() {
     if (this->mode() != File::WRITE && this->mode() != File::APPEND) {
         throw file_error("can not add a record to a file opened in read-only mode");
+    }
+
+    if (this->is_stream() && this->n_records_ >= this->expected_n_records_) {
+        throw file_error(
+            "can not write more than {} records to '{}': this is the number "
+            "of records announced in the header",
+            this->expected_n_records_, this->path()
+        );
     }
 
     this->n_records_ += 1;
@@ -780,6 +810,11 @@ void Netcdf3File::add_record() {
             }
             variable.written_at_last_step_ = false;
         }
+    }
+
+    if (this->is_stream()) {
+        // all previous records are complete, send them to the output stream
+        this->flush_stream(this->records_offset_ + (this->n_records_ - 1) * this->record_size_);
     }
 }
 
@@ -852,13 +887,21 @@ void Netcdf3Builder::initialize(Netcdf3File* file) && {
     if (file->initialized_) {
         throw file_error("can not initialize a file twice");
     }
+    if (file->is_stream() && file->expected_n_records_ == 0) {
+        throw file_error(
+            "the number of records must be set before writing NetCDF to "
+            "a stream ('{}'), since the header can not be updated afterwards",
+            file->path()
+        );
+    }
     file->initialized_ = true;
 
     file->seek(0);
 
     file->write_char("CDF", 3);
     file->write_single_char(2); // version == 2 for 64-bit offset
-    file->write_single_i32(static_cast<int32_t>(file->n_records_)); // record length
+    // number of records, updated when closing the file unless it is a stream
+    file->write_single_i32(static_cast<int32_t>(file->expected_n_records_));
 
     // write dimensions
     file->write_single_i32(constants::NC_DIMENSION);
@@ -951,6 +994,7 @@ void Netcdf3Builder::initialize(Netcdf3File* file) && {
         offset += delta;
     }
 
+    file->records_offset_ = offset;
     uint64_t record_size = 0;
     for (auto& it: variables) {
         if (!it.second.is_record()) {

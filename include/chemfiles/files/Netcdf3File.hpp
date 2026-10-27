@@ -351,10 +351,11 @@ public:
         return n_records_;
     }
 
-    // Set the number of frames/steps/records manually
-    void set_n_records(size_t n_records) {
-        n_records_ = n_records;
-    }
+    /// Set the number of records that will be written to this file. This is
+    /// required when writing to a stream (stdout), since the number of records
+    /// is stored in the header and the header can not be updated afterwards.
+    /// This must be called before the file is initialized.
+    void set_n_records(size_t n_records);
 
     /// get the size in bytes of a full record entry, including all record variables
     uint64_t record_size() const {
@@ -394,6 +395,10 @@ private:
     bool use_64bit_header_ = false;
     /// current number of records in the file
     uint64_t n_records_ = 0;
+    /// number of records announced with `set_n_records`, written in the header
+    uint64_t expected_n_records_ = 0;
+    /// offset in the file of the first record
+    uint64_t records_offset_ = 0;
     /// size in bytes of a full record entry, including all record variables
     uint64_t record_size_ = 0;
 
