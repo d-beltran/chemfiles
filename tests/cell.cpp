@@ -85,6 +85,23 @@ TEST_CASE("Use the UnitCell type") {
             CHECK(approx_eq(cell.lengths(), {26.2553, 11.3176, 11.8892}, 1e-4));
             CHECK(approx_eq(cell.angles(), {90, 112.159, 90}, 1e-4));
         }
+
+        SECTION("Rotated") {
+            // Orthorhombic cell rotated by 90° around the (1, 1, 1) axis
+            auto matrix = Matrix3D(
+                0, 0, 3,
+                5, 0, 0,
+                0, 1, 0
+            );
+            auto cell = UnitCell(matrix);
+            CHECK(cell.shape() == UnitCell::TRICLINIC);
+            CHECK(cell.matrix() == matrix);
+            CHECK(approx_eq(cell.lengths(), {3, 5, 1}, 1e-12));
+            CHECK(approx_eq(cell.angles(), {90, 90, 90}, 1e-12));
+            CHECK(approx_eq(cell.volume(), 15, 1e-12));
+            // Wrapping happens along the rotated cell vectors
+            CHECK(approx_eq(cell.wrap(Vector3D(7.0, 1.4, 3.6)), Vector3D(2.0, 0.4, 0.6), 1e-12));
+        }
     }
 
     SECTION("Operators") {
@@ -153,15 +170,6 @@ TEST_CASE("Use the UnitCell type") {
                 0.0000,  0.0000,  11.011
             );
             CHECK_THROWS_WITH(UnitCell(matrix), "invalid unit cell matrix with negative determinant");
-
-            // Rotated cells are not supported
-            matrix = Matrix3D(
-                0, 0, 3,
-                5, 0, 0,
-                0, 1, 0
-            );
-            CHECK_THROWS_WITH(UnitCell(matrix),
-                "orthorhombic cell must have their a vector along x axis, b vector along y axis and c vector along z axis");
         }
 
         SECTION("setting lengths & angles") {

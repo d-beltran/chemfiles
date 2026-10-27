@@ -130,22 +130,6 @@ static Vector3D calc_angles_from_cell_matrix(const Matrix3D& matrix) {
     };
 }
 
-static bool is_infinite(const Vector3D& lengths) {
-    return is_roughly_zero(lengths[0])
-        && is_roughly_zero(lengths[1])
-        && is_roughly_zero(lengths[2]);
-}
-
-static bool is_orthorhombic(const Vector3D& lengths, const Vector3D& angles) {
-    if (is_infinite(lengths)) {
-        return false;
-    }
-    // we support cells with one or two lengths of 0 which results in NaN angles
-    return (is_roughly_90(angles[0]) || std::isnan(angles[0]))
-        && (is_roughly_90(angles[1]) || std::isnan(angles[1]))
-        && (is_roughly_90(angles[2]) || std::isnan(angles[2]));
-}
-
 UnitCell::UnitCell(): UnitCell({0, 0, 0}) {}
 
 UnitCell::UnitCell(Vector3D lengths): UnitCell(lengths, {90, 90, 90}) {}
@@ -159,12 +143,8 @@ UnitCell::UnitCell(Matrix3D matrix): matrix_(matrix), matrix_inv_transposed_(Mat
         throw error("invalid unit cell matrix with negative determinant");
     }
 
-    auto lengths = calc_lengths_from_cell_matrix(matrix_);
-    auto angles = calc_angles_from_cell_matrix(matrix_);
-    if (!is_diagonal(matrix_) && is_orthorhombic(lengths, angles)) {
-        throw error("orthorhombic cell must have their a vector along x axis, b vector along y axis and c vector along z axis");
-    }
-
+    // Rotated cells (e.g. after fitting a trajectory) are kept as they are.
+    // Any non-diagonal matrix is TRICLINIC, even if all angles are 90°
     if (is_diagonal(matrix_)) {
         if (is_roughly_zero(matrix_[0][0]) && is_roughly_zero(matrix_[1][1]) && is_roughly_zero(matrix_[2][2])) {
             shape_ = INFINITE;
