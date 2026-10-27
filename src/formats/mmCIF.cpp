@@ -2,19 +2,21 @@
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+
 #include <map>
 #include <array>
 #include <vector>
 #include <string>
 #include <utility>
 #include <algorithm>
+#include <string_view>
 
 #include "chemfiles/types.hpp"
 #include "chemfiles/utils.hpp"
 #include "chemfiles/parse.hpp"
 #include "chemfiles/error_fmt.hpp"
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 #include "chemfiles/File.hpp"
@@ -53,8 +55,9 @@ template<> const FormatMetadata& chemfiles::format_metadata<mmCIFFormat>() {
     return metadata;
 }
 
-/// CIF files store which digits are insignificant, we need to remove this
-static double cif_to_double(std::string line);
+/// CIF files store which digits are insignificant inside parenthesis, this
+/// function handle this
+static double cif_to_double(std::string_view line);
 
 void mmCIFFormat::init_() {
     if (file_.mode() == File::WRITE) {
@@ -89,41 +92,40 @@ void mmCIFFormat::init_() {
         }
 
         if (line_split[0] == "_cell_length_a" || line_split[0] == "_cell.length_a") {
-            lengths[0] = cif_to_double(line_split[1].to_string());
+            lengths[0] = cif_to_double(line_split[1]);
         }
 
         if (line_split[0] == "_cell_length_b" || line_split[0] == "_cell.length_b") {
-            lengths[1] = cif_to_double(line_split[1].to_string());
+            lengths[1] = cif_to_double(line_split[1]);
         }
 
         if (line_split[0] == "_cell_length_c" || line_split[0] == "_cell.length_c") {
-            lengths[2] = cif_to_double(line_split[1].to_string());
+            lengths[2] = cif_to_double(line_split[1]);
         }
 
         if (line_split[0] == "_cell_angle_alpha" || line_split[0] == "_cell.angle_alpha") {
-            angles[0] = cif_to_double(line_split[1].to_string());
+            angles[0] = cif_to_double(line_split[1]);
         }
 
         if (line_split[0] == "_cell_angle_beta" || line_split[0] == "_cell.angle_beta") {
-            angles[1] = cif_to_double(line_split[1].to_string());
+            angles[1] = cif_to_double(line_split[1]);
         }
 
         if (line_split[0] == "_cell_angle_gamma" || line_split[0] == "_cell.angle_gamma") {
-            angles[2] = cif_to_double(line_split[1].to_string());
+            angles[2] = cif_to_double(line_split[1]);
         }
 
         if (line_split[0] == "_entry.id") {
-            pdb_idcode_ = line_split[1].to_string();
+            pdb_idcode_ = std::string(line_split[1]);
         }
 
         if (line_split[0] == "_struct.title") {
             auto trimmed = trim(line.substr(13));
-            name_ = trimmed.size() > 2 ?
-                    trimmed.substr(1, trimmed.size() - 2).to_string() : "";
+            name_ = trimmed.size() > 2 ? std::string(trimmed.substr(1, trimmed.size() - 2)) : "";
         }
 
         if (in_loop && line_split[0].find("_atom_site.") != std::string::npos) {
-            auto atom_label = line_split[0].substr(11).to_string();
+            auto atom_label = std::string(line_split[0].substr(11));
             atom_site_map_[atom_label] = current_index++;
             break;
         }
@@ -140,7 +142,7 @@ void mmCIFFormat::init_() {
 
     do {
         if (line.find("_atom_site") != std::string::npos) {
-            auto atom_label = trim(line).substr(11).to_string();
+            auto atom_label = std::string(trim(line).substr(11));
             atom_site_map_[atom_label] = current_index++;
 
             position = file_.tellpos();
@@ -154,7 +156,7 @@ void mmCIFFormat::init_() {
     } while (!file_.eof());
 
     // After this block ends, we have the start of coordinates
-    steps_positions_.push_back(position);
+    frame_positions_.push_back(position);
 
     if (atom_site_map_.find("type_symbol") == atom_site_map_.end()) {
         throw format_error("could not find _atom_site.type_symbol in '{}'", file_.path());
@@ -168,7 +170,7 @@ void mmCIFFormat::init_() {
     // Do we have a special extension for multiple modes?
     if (model_position == atom_site_map_.end()) {
         // If not, we are done
-        file_.seekpos(steps_positions_[0]);
+        file_.seekpos(frame_positions_[0]);
         return;
     }
 
@@ -188,21 +190,21 @@ void mmCIFFormat::init_() {
         size_t current_position = parse<size_t>(line_split[model_position->second]);
 
         if (current_position != last_position) {
-            steps_positions_.push_back(position);
+            frame_positions_.push_back(position);
             last_position = current_position;
         }
     } while (!file_.eof());
 
-    file_.seekpos(steps_positions_[0]);
+    file_.seekpos(frame_positions_[0]);
 }
 
-size_t mmCIFFormat::nsteps() {
-    return steps_positions_.size();
+size_t mmCIFFormat::size() {
+    return frame_positions_.size();
 }
 
-void mmCIFFormat::read_step(const size_t step, Frame& frame) {
-    assert(step < steps_positions_.size());
-    file_.seekpos(steps_positions_[step]);
+void mmCIFFormat::read_at(const size_t index, Frame& frame) {
+    assert(index < frame_positions_.size());
+    file_.seekpos(frame_positions_[index]);
     read(frame);
 }
 
@@ -283,23 +285,23 @@ void mmCIFFormat::read(Frame& frame) {
             break;
         }
 
-        Atom atom(
-            line_split[label_atom_id->second].to_string(),
-            line_split[type_symbol].to_string()
+        auto atom = Atom(
+            std::string(line_split[label_atom_id->second]),
+            std::string(line_split[type_symbol])
         );
 
         if (label_alt_id != atom_site_map_.end() &&
             line_split[label_alt_id->second] != ".") {
-            atom.set("altloc", line_split[label_alt_id->second].to_string());
+            atom.set("altloc", std::string(line_split[label_alt_id->second]));
         }
 
         if (formal_charge != atom_site_map_.end()) {
-            atom.set_charge(cif_to_double(line_split[formal_charge->second].to_string()));
+            atom.set_charge(cif_to_double(line_split[formal_charge->second]));
         }
 
-        auto x = cif_to_double(line_split[cartn_x].to_string());
-        auto y = cif_to_double(line_split[cartn_y].to_string());
-        auto z = cif_to_double(line_split[cartn_z].to_string());
+        auto x = cif_to_double(line_split[cartn_x]);
+        auto y = cif_to_double(line_split[cartn_y]);
+        auto z = cif_to_double(line_split[cartn_z]);
         frame.add_atom(std::move(atom), Vector3D(x, y, z));
 
         position = file_.tellpos();
@@ -322,12 +324,12 @@ void mmCIFFormat::read(Frame& frame) {
             throw format_error("invalid CIF residue or entity numeric: {}", e.what());
         }
 
-        auto chainid = line_split[label_asym_id->second].to_string();
+        auto chainid = std::string(line_split[label_asym_id->second]);
 
         if (map_residues_indexes.find({chainid, resid}) == map_residues_indexes.end()) {
 
             auto name = line_split[label_comp_id->second];
-            Residue residue(name.to_string(), resid);
+            Residue residue(std::string(name), resid);
             residue.add_atom(atom_id);
 
             // This will be saved as a string on purpose to match MMTF
@@ -336,7 +338,7 @@ void mmCIFFormat::read(Frame& frame) {
             }
 
             if (auth_asym_id != atom_site_map_.end()) {
-                residue.set("chainname", line_split[auth_asym_id->second].to_string());
+                residue.set("chainname", std::string(line_split[auth_asym_id->second]));
             }
 
             if (group_pdb != atom_site_map_.end()) {
@@ -370,13 +372,13 @@ void mmCIFFormat::write(const Frame& frame) {
         file_.print("# generated by Chemfiles\n");
         file_.print("#\n");
         auto lengths = frame.cell().lengths();
-        file_.print("_cell.length_a {:#}\n", lengths[0]);
-        file_.print("_cell.length_b {:#}\n", lengths[1]);
-        file_.print("_cell.length_c {:#}\n", lengths[2]);
+        file_.print("_cell.length_a {:#g}\n", lengths[0]);
+        file_.print("_cell.length_b {:#g}\n", lengths[1]);
+        file_.print("_cell.length_c {:#g}\n", lengths[2]);
         auto angles = frame.cell().angles();
-        file_.print("_cell.length_alpha {:#}\n", angles[0]);
-        file_.print("_cell.length_beta  {:#}\n", angles[1]);
-        file_.print("_cell.length_gamma {:#}\n", angles[2]);
+        file_.print("_cell.length_alpha {:#g}\n", angles[0]);
+        file_.print("_cell.length_beta  {:#g}\n", angles[1]);
+        file_.print("_cell.length_gamma {:#g}\n", angles[2]);
         file_.print("#\n");
         file_.print("loop_\n");
         file_.print("_atom_site.group_PDB\n");
@@ -427,7 +429,7 @@ void mmCIFFormat::write(const Frame& frame) {
 
         const auto& atom = frame[i];
 
-        file_.print("{} {: <5} {: <2} {: <4} {} {: >3} {} {: >4} {:8.3f} {:8.3f} {:8.3f} {:#} {} {}\n",
+        file_.print("{} {: <5} {: <2} {: <4} {} {: >3} {} {: >4} {:8.3f} {:8.3f} {:8.3f} {:8.3f} {} {}\n",
                 pdbgroup, atoms_, atom.type(), atom.name(), ".", compid,
                 asymid, seq_id, positions[i][0], positions[i][1], positions[i][2],
                 atom.charge(), auth_asymid, models_
@@ -436,8 +438,19 @@ void mmCIFFormat::write(const Frame& frame) {
 
 }
 
-double cif_to_double(std::string line) {
-    line.erase(std::remove(line.begin(), line.end(), '('), line.end());
-    line.erase(std::remove(line.begin(), line.end(), ')'), line.end());
+double cif_to_double(std::string_view line) {
+    // only allocate a new string if we actually find `(` somewhere, otherwise
+    // just parse it
+    std::string line_string;
+
+    auto open = std::find(line.begin(), line.end(), '(');  // NOLINT(readability-qualified-auto)
+    if (open != line.end()) {
+        line_string = std::string(line);
+        line_string.erase(std::remove(line_string.begin(), line_string.end(), '('), line_string.end());
+        line_string.erase(std::remove(line_string.begin(), line_string.end(), ')'), line_string.end());
+
+        line = line_string;
+    }
+
     return parse<double>(line);
 }

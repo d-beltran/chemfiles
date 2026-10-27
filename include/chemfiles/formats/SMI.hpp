@@ -4,9 +4,13 @@
 #ifndef CHEMFILES_FORMAT_SMI_HPP
 #define CHEMFILES_FORMAT_SMI_HPP
 
+#include <cstddef>
 #include <cstdint>
+
 #include <map>
 #include <stack>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <string>
 #include <memory>
@@ -18,7 +22,6 @@
 #include "chemfiles/Residue.hpp"
 #include "chemfiles/Connectivity.hpp"
 
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 namespace chemfiles {
@@ -31,7 +34,7 @@ class FormatMetadata;
 /// SMI/OpenSMILES file format reader and writer.
 class SMIFormat final: public TextFormat {
 public:
-    SMIFormat(const std::string& path, File::Mode mode, File::Compression compression):
+    SMIFormat(std::string path, File::Mode mode, File::Compression compression):
         TextFormat(std::move(path), mode, compression) {}
 
     SMIFormat(std::shared_ptr<MemoryBuffer> memory, File::Mode mode, File::Compression compression) :
@@ -43,10 +46,10 @@ public:
 
 private:
     /// [for reading] adds an atom defined by `atom_name` to the topology
-    Atom& add_atom(Topology& topology, string_view atom_name);
+    Atom& add_atom(Topology& topology, std::string_view atom_name);
 
     /// [for reading] adds an atom defined by the string `smiles` starting at position i
-    void process_property_list(Topology& topology, string_view smiles);
+    void process_property_list(Topology& topology, std::string_view smiles);
 
     /// [for reading] Opens and closes a ring with id `ring_id`
     void check_ring_(Topology& topology, size_t ring_id);

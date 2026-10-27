@@ -11,16 +11,17 @@
 #include <tuple>
 #include <deque>
 #include <string>
+#include <utility>
 #include <vector>
 #include <iterator>
 #include <algorithm>
+#include <string_view>
 #include <unordered_map>
 
 #include "chemfiles/utils.hpp"
 #include "chemfiles/parse.hpp"
 #include "chemfiles/warnings.hpp"
 #include "chemfiles/error_fmt.hpp"
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 #include "chemfiles/File.hpp"
@@ -30,6 +31,7 @@
 #include "chemfiles/Residue.hpp"
 #include "chemfiles/Topology.hpp"
 #include "chemfiles/Connectivity.hpp"
+#include "chemfiles/Format.hpp"
 #include "chemfiles/FormatMetadata.hpp"
 
 #include "chemfiles/formats/SMI.hpp"
@@ -73,17 +75,17 @@ static bool is_aromatic_organic(char c) {
     }
 }
 
-static bool is_aliphatic_organic(string_view s) {
+static bool is_aliphatic_organic(std::string_view s) {
     // Note: Including H here is non-standard, but allows for HC(H)(H)H
-    static std::set<string_view> ALIPHATIC_ORGANIC = {
+    static std::set<std::string_view> ALIPHATIC_ORGANIC = {
         "B", "C", "N", "O", "S", "P", "F", "Cl", "Br", "I", "H"
     };
     return ALIPHATIC_ORGANIC.count(s) != 0;
 }
 
-static bool is_chirality_tag(string_view s) {
+static bool is_chirality_tag(std::string_view s) {
     // list of valid tags
-    static std::set<string_view> CHIRALITY_TAGS = {
+    static std::set<std::string_view> CHIRALITY_TAGS = {
         "TH", "SP", "TB", "OH", "AL"
     };
     return CHIRALITY_TAGS.count(s) != 0;
@@ -91,7 +93,7 @@ static bool is_chirality_tag(string_view s) {
 
 /// Attempts to read a number from the string. The `start` argument is updated
 /// to the last numberic character in `smiles`.
-static size_t read_number(string_view smiles, size_t& start) {
+static size_t read_number(std::string_view smiles, size_t& start) {
     if (start >= smiles.size() || !is_ascii_digit(smiles[start])) {
         start--;
         return 0;
@@ -104,7 +106,7 @@ static size_t read_number(string_view smiles, size_t& start) {
     return parse<size_t>(smiles.substr(old, start - old + 1));
 }
 
-static string_view read_property_atom(string_view smiles, size_t& start) {
+static std::string_view read_property_atom(std::string_view smiles, size_t& start) {
     auto old = start;
     if (smiles[start] == '\'') {
         do {
@@ -120,8 +122,8 @@ static string_view read_property_atom(string_view smiles, size_t& start) {
     }
 }
 
-Atom& SMIFormat::add_atom(Topology& topology, string_view atom_name) {
-    topology.add_atom(Atom(atom_name.to_string()));
+Atom& SMIFormat::add_atom(Topology& topology, std::string_view atom_name) {
+    topology.add_atom(Atom(std::string(atom_name)));
 
     if (!first_atom_) {
         topology.add_bond(previous_atom_, ++current_atom_, current_bond_order_);
@@ -134,7 +136,7 @@ Atom& SMIFormat::add_atom(Topology& topology, string_view atom_name) {
     return topology[topology.size() - 1];
 }
 
-void SMIFormat::process_property_list(Topology& topology, string_view smiles) {
+void SMIFormat::process_property_list(Topology& topology, std::string_view smiles) {
     size_t i = 0;
     double mass = 0.0;
     if (is_ascii_digit(smiles[i])) {
@@ -184,7 +186,7 @@ void SMIFormat::process_property_list(Topology& topology, string_view smiles) {
                 ++i;
             } else if (i + 2 < smiles.size() && is_chirality_tag(smiles.substr(i + 1, 2))) {
                 // Set the type of the chirality
-                chirality_type += " " + smiles.substr(i + 1, 2).to_string();
+                chirality_type += " " + std::string(smiles.substr(i + 1, 2));
                 i += 2;
                 chirality_type += std::to_string(read_number(smiles, ++i));
             }
@@ -265,7 +267,7 @@ void SMIFormat::read_next(Frame& frame) {
         }
 
         // Check for 'CurlySMILES' and add the associated tags
-        if (smiles[i] == '{' && topology.size()) {
+        if (smiles[i] == '{' && (topology.size() != 0)) {
             auto prop_end = smiles.find_first_of('}', i);
 
             if (prop_end == std::string::npos) {
@@ -273,7 +275,7 @@ void SMIFormat::read_next(Frame& frame) {
             }
 
             auto curly_prop = smiles.substr(i + 1, prop_end - i - 1);
-            topology[topology.size() - 1].set("curly_property", curly_prop.to_string());
+            topology[topology.size() - 1].set("curly_property", std::string(curly_prop));
             i = prop_end;
             continue;
         }
@@ -401,7 +403,7 @@ void SMIFormat::read_next(Frame& frame) {
 
     if (i < smiles.size()) {
         auto name = smiles.substr(i);
-        frame.set("name", trim(name).to_string());
+        frame.set("name", std::string(trim(name)));
     }
 }
 
@@ -440,7 +442,7 @@ static void find_rings(
         // previous_atom Atom which was bound to the current atom
 
         std::stack<std::pair<size_t, size_t>> atoms_to_process;
-        atoms_to_process.push({ current_atom, current_atom });
+        atoms_to_process.emplace(current_atom, current_atom);
 
         while (!atoms_to_process.empty()) {
 
@@ -449,7 +451,7 @@ static void find_rings(
             std::tie(current_atom, previous_atom) = atoms_to_process.top();
             atoms_to_process.pop();
 
-            auto& current_atom_bonds = adj_list[current_atom];
+            const auto& current_atom_bonds = adj_list[current_atom];
 
             // We go through the neighbors backwards because we are using a
             // stack and want to go through them in the forward direction
@@ -689,7 +691,7 @@ void SMIFormat::write_next(const Frame& frame) {
     // Create an adjacent list as working with this is easier
     adj_list_.clear();
     adj_list_.resize(frame.size());
-    for (auto& bond : frame.topology().bonds()) {
+    for (const auto& bond : frame.topology().bonds()) {
         adj_list_[bond[0]].push_back(bond[1]);
         adj_list_[bond[1]].push_back(bond[0]);
     }

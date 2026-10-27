@@ -9,6 +9,7 @@
 #include "chemfiles/formats/BIN.hpp"
 
 #include <iostream>
+#include <limits>
 
 using namespace chemfiles;
 
@@ -42,9 +43,9 @@ float buffer;
 BINFormat::BINFormat(std::string path, File::Mode mode, File::Compression compression)
     : file_(std::move(path), mode) {}
 
-void BINFormat::read_step(size_t step, Frame& frame) {
+void BINFormat::read_at(size_t index, Frame& frame) {
     // Calculated the offset of bytes given the specified frame
-    size_t offset = bytes_per_frame * step;
+    size_t offset = bytes_per_frame * index;
     // Move to the calculated position in the trajectory file
     file_.seek(offset);
     // Start to read the trajectory file
@@ -74,9 +75,14 @@ void BINFormat::read(Frame& frame) {
     }
 }
 
-size_t BINFormat::nsteps() {
+size_t BINFormat::size() {
     if (bytes_per_frame == 0) {
         return 0;
+    }
+    // The size of a stream (stdin) can not be known in advance, so frames are
+    // read until the end of the input
+    if (file_.is_stream()) {
+        return std::numeric_limits<size_t>::max();
     }
     return file_.file_size() / bytes_per_frame;
 }

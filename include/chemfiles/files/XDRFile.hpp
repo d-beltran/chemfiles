@@ -4,12 +4,18 @@
 #ifndef CHEMFILES_XDR_FILE_HPP
 #define CHEMFILES_XDR_FILE_HPP
 
+#include <cstddef>
+#include <cstdint>
+
 #include <string>
 #include <vector>
+
+#include "chemfiles/File.hpp"
 
 #include "chemfiles/files/BinaryFile.hpp"
 
 namespace chemfiles {
+class UnitCell;
 
 /// Partial implementation of XDR according to RFC 4506
 /// (see: https://datatracker.ietf.org/doc/html/rfc4506)
@@ -17,10 +23,13 @@ namespace chemfiles {
 class XDRFile final : public BigEndianFile {
   public:
     XDRFile(std::string path, File::Mode mode);
-    ~XDRFile() = default;
+    XDRFile(XDRFile&& other) noexcept = default;
+    XDRFile& operator=(XDRFile&& other) = default;
+    ~XDRFile() noexcept override = default;
 
     using BinaryFile::read_f32;
     using BinaryFile::read_f64;
+    using BinaryFile::read_i32;
     using BinaryFile::write_f32;
 
     /// Read a non-compliant GROMACS string
@@ -32,15 +41,27 @@ class XDRFile final : public BigEndianFile {
     void write_gmx_string(const std::string& value);
 
     /// Read compressed GROMACS floats and returns the precision
-    float read_gmx_compressed_floats(std::vector<float>& data);
+    float read_gmx_compressed_floats(std::vector<float>& data, bool is_long_format);
     /// Write compressed GROMACS floats with a given precision
-    void write_gmx_compressed_floats(const std::vector<float>& data, float precision);
+    void write_gmx_compressed_floats(const std::vector<float>& data, float precision,
+                                     bool is_long_format);
+
+    /// Read the GROMACS simulation box in nano meters
+    UnitCell read_gmx_box(bool use_double = false);
+
+    /// Read an unsigned size value as i32 by performing a checked conversion
+    size_t read_single_size_as_i32();
 
   private:
     /// Read XDR variable-length opaque data
     void read_opaque(std::vector<char>& data);
     /// Write XDR variable-length opaque data
     void write_opaque(const char* data, uint32_t count);
+    /// Read GROMACS long variable-length opaque data
+    void read_gmx_long_opaque(std::vector<char>& data);
+    /// Write GROMACS long variable-length opaque data
+    void write_gmx_long_opaque(const char* data, uint64_t count);
+
     /// Cache allocation for compressed data (XTC)
     std::vector<char> compressed_data_;
     /// Cache allocation for intermediate buffer (XTC)

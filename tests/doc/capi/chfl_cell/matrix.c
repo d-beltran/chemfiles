@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-int main() {
+int main(void) {
     // [example]
     CHFL_CELL* cell = chfl_cell((chfl_vector3d){10, 11, 12}, NULL);
 
@@ -16,7 +16,7 @@ int main() {
     assert(matrix[2][2] == 12);
 
     // Out of diagonal terms are zero
-    assert(matrix[2][1] == 0);
+    assert(matrix[1][2] == 0);
 
     chfl_free(cell);
     // [example]

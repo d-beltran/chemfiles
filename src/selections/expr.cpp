@@ -2,20 +2,18 @@
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cassert>
 
 #include <array>
 #include <string>
+#include <utility>
 #include <vector>
 #include <memory>
 #include <algorithm>
 #include <functional>
 
-#include <fmt/format.h>
-
-#include "chemfiles/types.hpp"
-#include "chemfiles/cpp14.hpp"
 #include "chemfiles/error_fmt.hpp"
 #include "chemfiles/unreachable.hpp"
 #include "chemfiles/external/optional.hpp"
@@ -47,12 +45,13 @@ static std::string kind_as_string(Property::Kind kind) {
         return "string";
     case Property::VECTOR3D:
         return "Vector3D";
+    default:
+        unreachable();
     }
-    unreachable();
 }
 
-SubSelection::SubSelection(SubSelection&&) = default;
-SubSelection& SubSelection::operator=(SubSelection&&) = default;
+SubSelection::SubSelection(SubSelection&&) noexcept = default;
+SubSelection& SubSelection::operator=(SubSelection&&) noexcept = default;
 SubSelection::~SubSelection() = default;
 
 SubSelection::SubSelection(Variable variable): selection_(nullptr), variable_(variable) {
@@ -60,7 +59,7 @@ SubSelection::SubSelection(Variable variable): selection_(nullptr), variable_(va
 }
 
 SubSelection::SubSelection(std::string selection):
-    selection_(chemfiles::make_unique<Selection>(std::move(selection))), variable_(UINT8_MAX)
+    selection_(std::make_unique<Selection>(std::move(selection))), variable_(UINT8_MAX)
 {
     assert(selection_->size() == 1);
 }
@@ -195,7 +194,7 @@ std::string IsBonded::print(unsigned /*unused*/) const {
 }
 
 bool IsBonded::is_match(const Frame& frame, const Match& match) const {
-    auto& bonds = frame.topology().bonds();
+    const auto& bonds = frame.topology().bonds();
     for (auto i: i_.eval(frame, match)) {
         for (auto j: j_.eval(frame, match)) {
             if (i == j) {
@@ -223,7 +222,7 @@ std::string IsAngle::print(unsigned /*unused*/) const {
 }
 
 bool IsAngle::is_match(const Frame& frame, const Match& match) const {
-    auto& angles = frame.topology().angles();
+    const auto& angles = frame.topology().angles();
     for (auto i: i_.eval(frame, match)) {
         for (auto j: j_.eval(frame, match)) {
             for (auto k: k_.eval(frame, match)) {
@@ -254,7 +253,7 @@ std::string IsDihedral::print(unsigned /*unused*/) const {
 }
 
 bool IsDihedral::is_match(const Frame& frame, const Match& match) const {
-    auto& dihedrals = frame.topology().dihedrals();
+    const auto& dihedrals = frame.topology().dihedrals();
     for (auto i: i_.eval(frame, match)) {
         for (auto j: j_.eval(frame, match)) {
             for (auto k: k_.eval(frame, match)) {
@@ -288,7 +287,7 @@ std::string IsImproper::print(unsigned /*unused*/) const {
 }
 
 bool IsImproper::is_match(const Frame& frame, const Match& match) const {
-    auto& impropers = frame.topology().impropers();
+    const auto& impropers = frame.topology().impropers();
     for (auto i: i_.eval(frame, match)) {
         for (auto j: j_.eval(frame, match)) {
             for (auto k: k_.eval(frame, match)) {
@@ -318,7 +317,7 @@ void IsImproper::clear() {
 }
 
 std::string StringSelector::print(unsigned /*unused*/) const {
-    auto op = equals_ ? "==" : "!=";
+    const auto *op = equals_ ? "==" : "!=";
     if (is_ident(value_)) {
         return fmt::format("{}(#{}) {} {}", name(), argument_ + 1, op, value_);
     } else {
@@ -420,6 +419,8 @@ bool Math::is_match(const Frame& frame, const Match& match) const {
     case Math::Operator::GREATER_EQUAL:
         operation = [](double l, double r){ return l >= r; };
         break;
+    default:
+        unreachable();
     }
 
     auto lhs = lhs_->eval(frame, match);
@@ -465,12 +466,12 @@ std::string Math::print(unsigned /*unused*/) const {
 void Math::optimize() {
     auto lhs_opt = lhs_->optimize();
     if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     }
 
     auto rhs_opt = rhs_->optimize();
     if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
 }
 
@@ -500,9 +501,9 @@ optional<double> Add::optimize() {
     if (lhs_opt && rhs_opt) {
         return lhs_opt.value() + rhs_opt.value();
     } else if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     } else if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
     return nullopt;
 }
@@ -537,9 +538,9 @@ optional<double> Sub::optimize() {
     if (lhs_opt && rhs_opt) {
         return lhs_opt.value() - rhs_opt.value();
     } else if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     } else if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
     return nullopt;
 }
@@ -574,9 +575,9 @@ optional<double> Mul::optimize() {
     if (lhs_opt && rhs_opt) {
         return lhs_opt.value() * rhs_opt.value();
     } else if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     } else if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
     return nullopt;
 }
@@ -611,9 +612,9 @@ optional<double> Div::optimize() {
     if (lhs_opt && rhs_opt) {
         return lhs_opt.value() / rhs_opt.value();
     } else if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     } else if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
     return nullopt;
 }
@@ -648,9 +649,9 @@ optional<double> Pow::optimize() {
     if (lhs_opt && rhs_opt) {
         return pow(lhs_opt.value(), rhs_opt.value());
     } else if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     } else if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
     return nullopt;
 }
@@ -710,9 +711,9 @@ optional<double> Mod::optimize() {
     if (lhs_opt && rhs_opt) {
         return fmod(lhs_opt.value(), rhs_opt.value());
     } else if (lhs_opt) {
-        lhs_ = chemfiles::make_unique<Number>(lhs_opt.value());
+        lhs_ = std::make_unique<Number>(lhs_opt.value());
     } else if (rhs_opt) {
-        rhs_ = chemfiles::make_unique<Number>(rhs_opt.value());
+        rhs_ = std::make_unique<Number>(rhs_opt.value());
     }
     return nullopt;
 }
@@ -923,8 +924,9 @@ std::string Position::name() const {
         return "y";
     case Coordinate::Z:
         return "z";
+    default:
+        unreachable();
     }
-    unreachable();
 }
 
 double Position::value(const Frame& frame, size_t i) const {
@@ -939,13 +941,14 @@ std::string Velocity::name() const {
         return "vy";
     case Coordinate::Z:
         return "vz";
+    default:
+        unreachable();
     }
-    unreachable();
 }
 
 double Velocity::value(const Frame& frame, size_t i) const {
     if (frame.velocities()) {
-        auto& velocities = *frame.velocities();
+        const auto& velocities = *frame.velocities();
         return velocities[i][static_cast<size_t>(coordinate_)];
     } else {
         // return nan so that all comparaison down the line evaluate to false

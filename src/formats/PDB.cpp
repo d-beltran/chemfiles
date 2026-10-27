@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 
 #include <map>
@@ -12,14 +13,13 @@
 #include <vector>
 #include <utility>
 #include <algorithm>
-#include <unordered_map>
+#include <string_view>
 
 #include "chemfiles/types.hpp"
 #include "chemfiles/utils.hpp"
 #include "chemfiles/parse.hpp"
 #include "chemfiles/warnings.hpp"
 #include "chemfiles/error_fmt.hpp"
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 #include "chemfiles/File.hpp"
@@ -30,6 +30,7 @@
 #include "chemfiles/Topology.hpp"
 #include "chemfiles/UnitCell.hpp"
 #include "chemfiles/Connectivity.hpp"
+#include "chemfiles/Format.hpp"
 #include "chemfiles/FormatMetadata.hpp"
 
 #include "chemfiles/formats/PDB.hpp"
@@ -89,7 +90,7 @@ static void check_values_size(const Vector3D& values, unsigned width, const std:
 
 // PDB record handled by chemfiles. Any record not in this enum are not yet
 // implemented.
-enum class Record {
+enum class Record: std::uint8_t {
     // Records containing summary data
     HEADER,
     TITLE,
@@ -117,7 +118,7 @@ enum class Record {
 };
 
 // Get the record type for a line.
-static Record get_record(string_view line);
+static Record get_record(std::string_view line);
 
 void PDBFormat::read_next(Frame& frame) {
     residues_.clear();
@@ -132,13 +133,13 @@ void PDBFormat::read_next(Frame& frame) {
         switch (record) {
         case Record::HEADER:
             if (line.size() >= 50) {
-                frame.set("classification", trim(line.substr(10, 40)).to_string());
+                frame.set("classification", std::string(trim(line.substr(10, 40))));
             }
             if (line.size() >= 59) {
-                frame.set("deposition_date", trim(line.substr(50, 9)).to_string());
+                frame.set("deposition_date", std::string(trim(line.substr(50, 9))));
             }
             if (line.size() >= 66) {
-                frame.set("pdb_idcode", trim(line.substr(62, 4)).to_string());
+                frame.set("pdb_idcode", std::string(trim(line.substr(62, 4))));
             }
             continue;
         case Record::TITLE:
@@ -147,7 +148,7 @@ void PDBFormat::read_next(Frame& frame) {
             // append to it
             name = frame.get<Property::STRING>("name").value_or("");
             name = name.empty() ? "" : name + " ";
-            frame.set("name", name + trim(line.substr(10 , 70)));
+            frame.set("name", name + std::string(trim(line.substr(10 , 70))));
             continue;
         case Record::CRYST1:
             read_CRYST1(frame, line);
@@ -207,6 +208,7 @@ void PDBFormat::read_next(Frame& frame) {
         case Record::IGNORED_:
             continue; // Nothing to do
         case Record::UNKNOWN_:
+        default:
             if (!file_.eof()) {
                 warning("PDB reader", "ignoring unknown record: {}", line);
             }
@@ -222,7 +224,7 @@ void PDBFormat::read_next(Frame& frame) {
     link_standard_residue_bonds(frame);
 }
 
-void PDBFormat::read_CRYST1(Frame& frame, string_view line) {
+void PDBFormat::read_CRYST1(Frame& frame, std::string_view line) {
     assert(line.substr(0, 6) == "CRYST1");
     if (line.length() < 54) {
         throw format_error("CRYST1 record '{}' is too small", line);
@@ -267,7 +269,7 @@ static const char* HELIX_TYPES[10] = {
     "polyproline",
 };
 
-void PDBFormat::read_HELIX(string_view line) {
+void PDBFormat::read_HELIX(std::string_view line) {
     if (line.length() < 33 + 5) {
         warning("PDB reader", "HELIX record too short: '{}'", line);
         return;
@@ -277,8 +279,8 @@ void PDBFormat::read_HELIX(string_view line) {
     auto chain_end = line[31];
     auto inscode_start = line[25];
     auto inscode_end = line[37];
-    auto resname_start = trim(line.substr(15, 3)).to_string();
-    auto resname_end = trim(line.substr(27, 3)).to_string();
+    auto resname_start = std::string(trim(line.substr(15, 3)));
+    auto resname_end = std::string(trim(line.substr(27, 3)));
 
     int64_t resid_start = 0;
     int64_t resid_end = 0;
@@ -313,14 +315,14 @@ void PDBFormat::read_HELIX(string_view line) {
     }
 }
 
-void PDBFormat::read_secondary(string_view line, size_t i_start, size_t i_end, string_view record) {
+void PDBFormat::read_secondary(std::string_view line, size_t i_start, size_t i_end, std::string_view record) {
     if (line.length() < i_end + 10) {
         warning("PDB reader", "secondary structure record too short: '{}'", line);
         return;
     }
 
-    auto resname_start = trim(line.substr(i_start, 3)).to_string();
-    auto resname_end = trim(line.substr(i_end, 3)).to_string();
+    auto resname_start = std::string(trim(line.substr(i_start, 3)));
+    auto resname_end = std::string(trim(line.substr(i_end, 3)));
 
     auto chain_start = line[i_start + 4];
     auto chain_end = line[i_end + 4];
@@ -352,7 +354,7 @@ void PDBFormat::read_secondary(string_view line, size_t i_start, size_t i_end, s
     secinfo_.insert({ start, std::make_pair(end, "extended") });
 }
 
-void PDBFormat::read_ATOM(Frame& frame, string_view line, bool is_hetatm) {
+void PDBFormat::read_ATOM(Frame& frame, std::string_view line, bool is_hetatm) {
     assert(line.substr(0, 6) == "ATOM  " || line.substr(0, 6) == "HETATM");
 
     if (line.length() < 54) {
@@ -382,15 +384,15 @@ void PDBFormat::read_ATOM(Frame& frame, string_view line, bool is_hetatm) {
     if (line.length() >= 78) {
         auto type = line.substr(76, 2);
         // Read both atom name and atom type
-        atom = Atom(trim(name).to_string(), trim(type).to_string());
+        atom = Atom(std::string(trim(name)), std::string(trim(type)));
     } else {
         // Read just the atom name and hope for the best.
-        atom = Atom(trim(name).to_string());
+        atom = Atom(std::string(trim(name)));
     }
 
     auto altloc = line.substr(16, 1);
     if (altloc != " ") {
-        atom.set("altloc", altloc.to_string());
+        atom.set("altloc", std::string(altloc));
     }
 
     try {
@@ -414,30 +416,30 @@ void PDBFormat::read_ATOM(Frame& frame, string_view line, bool is_hetatm) {
     }
 
     auto chain = line[21];
-    auto resname = trim(line.substr(17, 3)).to_string();
+    auto resname = std::string(trim(line.substr(17, 3)));
     auto full_residue_id = FullResidueId {chain, resid, resname, insertion_code};
     if (residues_.count(full_residue_id) == 0) {
         Residue residue(std::move(resname), resid);
         residue.add_atom(atom_id);
 
         if (insertion_code != ' ') {
-            residue.set("insertion_code", line.substr(26, 1).to_string());
+            residue.set("insertion_code", std::string(line.substr(26, 1)));
         }
 
         // Set whether or not the residue is standardized
         residue.set("is_standard_pdb", !is_hetatm);
         // This is saved as a string (instead of a number) on purpose
         // to match MMTF format
-        residue.set("chainid", line.substr(21, 1).to_string());
+        residue.set("chainid", std::string(line.substr(21, 1)));
         // PDB format makes no distinction between chainid and chainname
-        residue.set("chainname", line.substr(21, 1).to_string());
+        residue.set("chainname", std::string(line.substr(21, 1)));
 
         // segment name is not part of the standard, but something added by
         // CHARM/NAMD in the un-used character range 73-76
         if (line.length() > 72) {
             auto segname = trim(line.substr(72, 4));
             if (segname != "") {
-                residue.set("segname", segname.to_string());
+                residue.set("segname", std::string(segname));
             }
         }
 
@@ -465,7 +467,7 @@ void PDBFormat::read_ATOM(Frame& frame, string_view line, bool is_hetatm) {
     }
 }
 
-void PDBFormat::read_CONECT(Frame& frame, string_view line) {
+void PDBFormat::read_CONECT(Frame& frame, std::string_view line) {
     assert(line.substr(0, 6) == "CONECT");
     auto line_length = trim(line).length();
 
@@ -584,7 +586,7 @@ void PDBFormat::link_standard_residue_bonds(Frame& frame) {
             resid == previous_residue_id + 1 )
         {
             link_previous_nucleic = false;
-            frame.add_bond(previous_carboxylic_id, three_prime_oxygen->second);
+            frame.add_bond(previous_carboxylic_id, five_prime_phosphorus->second);
         }
 
         if (three_prime_oxygen != atom_name_to_index.end() ) {
@@ -607,7 +609,7 @@ void PDBFormat::link_standard_residue_bonds(Frame& frame) {
                 if (first_name[0] != 'H' && first_name != "OXT" &&
                     first_name[0] != 'P' && first_name.substr(0, 2) != "OP" ) {
                     warning("PDB reader",
-                        "found unexpected, non-standard atom '{}' in residue '{}' (resid {})",
+                        "could not find standard atom '{}' in residue '{}' (resid {})",
                         first_name, residue.name(), resid
                     );
                 }
@@ -619,7 +621,7 @@ void PDBFormat::link_standard_residue_bonds(Frame& frame) {
                 if (second_name[0] != 'H' && second_name != "OXT" &&
                     second_name[0] != 'P' && second_name.substr(0, 2) != "OP" ) {
                         warning("PDB reader",
-                            "found unexpected, non-standard atom '{}' in residue '{}' (resid {})",
+                            "could not find standard atom '{}' in residue '{}' (resid {})",
                             second_name, residue.name(), resid
                         );
                 }
@@ -631,7 +633,7 @@ void PDBFormat::link_standard_residue_bonds(Frame& frame) {
     }
 }
 
-Record get_record(string_view line) {
+Record get_record(std::string_view line) {
     auto rec = line.substr(0, 6);
     if(rec == "ENDMDL") {
         return Record::ENDMDL;
@@ -684,9 +686,7 @@ static std::string to_pdb_index(int64_t value, size_t width) {
     auto encoded = encode_hybrid36(width, value + 1);
 
     if (encoded[0] == '*' && (value == MAX_HYBRID36_W4_NUMBER || value == MAX_HYBRID36_W5_NUMBER)) {
-        auto type = width == 5 ?
-            "atom" : "residue";
-
+        const auto* type = width == 5 ? "atom" : "residue";
         warning("PDB writer", "the value for a {} serial/id is too large, using '{}' instead", type, encoded);
     }
 
@@ -712,7 +712,7 @@ static ResidueInformation get_residue_information(optional<const Residue&> resid
         return info;
     }
 
-    auto residue = *residue_opt;
+    const auto& residue = *residue_opt;
 
     if (residue.get<Property::BOOL>("is_standard_pdb").value_or(false)) {
         // only use ATOM if the residue is standardized
@@ -763,13 +763,13 @@ static ResidueInformation get_residue_information(optional<const Residue&> resid
 }
 
 static bool needs_ter_record(const ResidueInformation& residue) {
-    if (residue.composition_type.empty() ||
-        residue.composition_type == "other" || residue.composition_type == "OTHER" ||
-        residue.composition_type == "non-polymer" || residue.composition_type == "NON-POLYMER") {
-        return false;
-    }
-
-    return true;
+    return !(
+        residue.composition_type.empty() ||
+        residue.composition_type == "other" ||
+        residue.composition_type == "OTHER" ||
+        residue.composition_type == "non-polymer" ||
+        residue.composition_type == "NON-POLYMER"
+    );
 }
 
 // This function adjusts a given index to account for intervening TER records.
@@ -816,7 +816,7 @@ void PDBFormat::write_next(const Frame& frame) {
     optional<ResidueInformation> last_residue = nullopt;
     std::vector<size_t> ter_serial_numbers;
 
-    auto& positions = frame.positions();
+    const auto& positions = frame.positions();
     for (size_t i = 0; i < frame.size(); i++) {
 
         auto altloc = frame[i].get<Property::STRING>("altloc").value_or(" ");
@@ -841,7 +841,7 @@ void PDBFormat::write_next(const Frame& frame) {
             ++ter_count;
         }
 
-        auto& pos = positions[i];
+        const auto& pos = positions[i];
         check_values_size(pos, 8, "atomic position");
         file_.print(
             "{: <6}{: >5} {: <4s}{:1}{:3} {:1}{: >4s}{:1}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}      {: <4s}{: >2s}\n",
@@ -859,7 +859,7 @@ void PDBFormat::write_next(const Frame& frame) {
     }
 
     auto connect = std::vector<std::vector<int64_t>>(frame.size());
-    for (auto& bond : frame.topology().bonds()) {
+    for (const auto& bond : frame.topology().bonds()) {
         if (is_atom_record[bond[0]] && is_atom_record[bond[1]]) { // both must be standard residue atoms
             continue;
         }
@@ -924,7 +924,7 @@ optional<uint64_t> PDBFormat::forward() {
         if (line.substr(0, 6) == "ENDMDL") {
             // save the current line into an owned string, since the underlying
             // buffer in file_ can change in file_->readline();
-            saved_line = line.to_string();
+            saved_line = std::string(line);
             line = saved_line;
 
             auto save = file_.tellpos();

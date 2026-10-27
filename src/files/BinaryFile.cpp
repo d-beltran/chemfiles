@@ -1,11 +1,16 @@
 #include <cassert>
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+
+#include <memory>
+#include <string>
 #include <type_traits>
 
+#include "chemfiles/config.h"  // IWYU pragma: keep (CHEMFILES_WINDOWS)
+#include "chemfiles/File.hpp"
 #include "chemfiles/error_fmt.hpp"
-#include "chemfiles/external/span.hpp"
 #include "chemfiles/unreachable.hpp"
 #include "chemfiles/warnings.hpp"
 
@@ -14,11 +19,13 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <utility>
 
 #include <iostream>
 
 #ifdef CHEMFILES_WINDOWS
 #include <io.h>
+#include <filesystem>
 #endif
 
 #ifdef __CYGWIN__
@@ -42,6 +49,9 @@
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     #include <sys/mman.h>
     #include <unistd.h>
+
+    // Limit the memory usable by mmaped files to 100MiB at the time.
+    #define CHEMFILES_MMAP_SIZE 0x06400000
 #endif
 
 using namespace chemfiles;
@@ -63,6 +73,7 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     // If the output filename is "<stdout>" then it means we have to output the result to the terminal
     bool stdin_mode = this->path() == "<stdin>";
     bool stdout_mode = this->path() == "<stdout>";
+    stream_ = stdin_mode || stdout_mode;
 
 #ifdef CHEMFILES_WINDOWS
     open_mode |= _O_BINARY;
@@ -73,11 +84,18 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     int file_descriptor = -1;
     if (stdin_mode) {
         file_descriptor = fileno(stdin);
-    }
-    else if (stdout_mode) {
+    } else if (stdout_mode) {
         file_descriptor = fileno(stdout);
     } else {
+#ifdef CHEMFILES_WINDOWS
+        // On Windows, allow for UTF-8 paths containing non-ASCII characters
+        // Create a filesystem path. Using u8path ensures that the string is treated as UTF-8.
+        const std::filesystem::path file_path = std::filesystem::u8path(this->path());
+
+        file_descriptor = _wopen(file_path.c_str(), open_mode, permissions);
+#else
         file_descriptor = open(this->path().c_str(), open_mode, permissions);
+#endif
     }
     if (file_descriptor == -1) {
         throw file_error(
@@ -106,39 +124,19 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     page_size_ = static_cast<size_t>(sysconf(_SC_PAGESIZE));
 
     if (mode == File::READ) {
-        mmap_size_ = file_size_;
         total_written_size_ = file_size_;
     } else if (mode == File::WRITE) {
-        // set the map size to a large value (1GiB here) to reduce the number of
-        // time we have to unmap/mmap the file. This drastically improves
-        // performances when writing, at the cost of only being able to use mmap
-        // on 64-bit systems (on 32-bits systems, there is a very low chance to
-        // be able to get 1GiB contiguous allocation even in virtual memory, so
-        // we fallback to the implementation based on cstdio instead).
-        //
-        // This does not mean chemfiles will actually hold that much RAM, only a
-        // virtual allocation of that size.
-        mmap_size_ = 0x40000000;
+        total_written_size_ = 0;
     } else if (mode == File::APPEND) {
-        mmap_size_ = 0x40000000;
-        // make sure the file fits inside mmap_size_
-        while (file_size_ > mmap_size_) {
-            mmap_size_ *= 2;
-        }
-
-        offset_ = file_size_;
+        mmap_offset_ = (file_size_ / CHEMFILES_MMAP_SIZE) * CHEMFILES_MMAP_SIZE;
+        current_ = file_size_ % CHEMFILES_MMAP_SIZE;
         total_written_size_ = file_size_;
     } else {
         unreachable();
     }
 
-    mmap_data_ = static_cast<char*>(mmap(
-        nullptr, mmap_size_, mmap_prot_, MAP_SHARED, file_descriptor_, 0
-    ));
+    this->remap_file();
 
-    if (mmap_data_ == MAP_FAILED) {
-        throw file_error("mmap failed (1) for '{}': {}", this->path(), std::strerror(errno));
-    }
 #else
     const char* fdopen_mode;
     if (mode == Mode::READ) {
@@ -159,18 +157,98 @@ BinaryFile::BinaryFile(std::string path, File::Mode mode):
     assert(file_ != nullptr);
 
     if (mode == Mode::APPEND) {
-        fseek64(file_, 0, SEEK_END);
-    } else {
+        auto status = fseek64(file_, 0, SEEK_END);
+        if (status != 0) {
+            throw file_error("failed to seek in file: {}", std::strerror(errno));
+        }
+    } else if (!stream_) {
+        // stdin/stdout are not seekable, and are already at the start
         this->seek(0);
     }
 #endif
 }
 
-BinaryFile::~BinaryFile() {
+BinaryFile::~BinaryFile() noexcept {
+    this->close_file();
+}
+
+BinaryFile& BinaryFile::operator=(BinaryFile&& other) noexcept {
+    File::operator=(std::move(other));
+
+    this->close_file();
+
+    std::swap(this->stream_, other.stream_);
+
+#if CHEMFILES_BINARY_FILE_USE_MMAP
+    std::swap(this->file_descriptor_, other.file_descriptor_);
+    std::swap(this->total_written_size_, other.total_written_size_);
+    std::swap(this->mmap_data_, other.mmap_data_);
+    std::swap(this->file_size_, other.file_size_);
+    std::swap(this->page_size_, other.page_size_);
+    std::swap(this->mmap_offset_, other.mmap_offset_);
+    std::swap(this->mmap_prot_, other.mmap_prot_);
+    std::swap(this->current_, other.current_);
+#else
+    std::swap(this->file_, other.file_);
+#endif
+
+    return *this;
+}
+
+void BinaryFile::remap_file() {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     if (mmap_data_ != nullptr) {
-        msync(mmap_data_, mmap_size_, MS_SYNC);
-        munmap(mmap_data_, mmap_size_);
+        auto status = msync(mmap_data_, CHEMFILES_MMAP_SIZE, MS_SYNC);
+        if (status != 0) {
+            throw file_error(
+                "failed to sync file ({}), some data might be lost",
+                std::strerror(errno)
+            );
+        }
+
+        status = munmap(mmap_data_, CHEMFILES_MMAP_SIZE);
+        if (status != 0) {
+            throw file_error("failed to unmap file: {}", std::strerror(errno));
+        }
+    }
+
+    mmap_data_ = static_cast<char*>(mmap(
+        nullptr, CHEMFILES_MMAP_SIZE, mmap_prot_, MAP_SHARED, file_descriptor_, static_cast<off_t>(mmap_offset_)
+    ));
+
+    if (mmap_data_ == MAP_FAILED) {
+        throw file_error("mmap failed for '{}': {}", this->path(), std::strerror(errno));
+    }
+
+    auto status = madvise(mmap_data_, CHEMFILES_MMAP_SIZE, MADV_SEQUENTIAL);
+    if (status != 0) {
+        throw file_error("madvise failed for '{}': {}", this->path(), std::strerror(errno));
+    }
+#endif
+}
+
+
+
+void BinaryFile::close_file() noexcept {
+#if CHEMFILES_BINARY_FILE_USE_MMAP
+    if (mmap_data_ != nullptr) {
+        auto status = msync(mmap_data_, CHEMFILES_MMAP_SIZE, MS_SYNC);
+        if (status != 0) {
+            warning(
+                "binary file writer",
+                "failed to sync file ({}), some data might be lost",
+                std::strerror(errno)
+            );
+        }
+
+        status = munmap(mmap_data_, CHEMFILES_MMAP_SIZE);
+        if (status != 0) {
+            warning(
+                "binary file writer",
+                "failed to unmap file ({}), something might be wrong",
+                std::strerror(errno)
+            );
+        }
     }
 
     if (file_descriptor_ != -1) {
@@ -185,66 +263,70 @@ BinaryFile::~BinaryFile() {
             }
         }
 
-        close(file_descriptor_);
+        if (close(file_descriptor_) != 0) {
+            warning(
+                "binary file writer",
+                "failed to close the file ({}), something might be wrong",
+                std::strerror(errno)
+            );
+        }
     }
 
     file_descriptor_ = -1;
     total_written_size_ = 0;
     mmap_data_ = nullptr;
     file_size_ = 0;
-    mmap_size_ = 0;
+    mmap_offset_ = 0;
     mmap_prot_ = 0;
-    page_size_ = 0;
-    offset_ = 0;
+    current_ = 0;
 #else
-    if (this->mode() != Mode::READ) {
-        std::fflush(file_);
+    if (file_ == nullptr) {
+        return;
     }
 
-    std::fclose(file_);
+    if (this->mode() != Mode::READ) {
+        if (std::fflush(file_) != 0) {
+            warning("binary file writer", "failed to flush when closing the file, some data might be lost");
+        }
+    }
+
+    if (std::fclose(file_) != 0) {
+        warning("binary file writer", "failed to close the file, something might be wrong");
+    }
     file_ = nullptr;
 #endif
 }
 
-BinaryFile& BinaryFile::operator=(BinaryFile&& other) {
-    this->~BinaryFile();
-
-    File::operator=(std::move(other));
-
-#if CHEMFILES_BINARY_FILE_USE_MMAP
-    std::swap(this->file_descriptor_, other.file_descriptor_);
-    std::swap(this->total_written_size_, other.total_written_size_);
-    std::swap(this->mmap_data_, other.mmap_data_);
-    std::swap(this->file_size_, other.file_size_);
-    std::swap(this->mmap_size_, other.mmap_size_);
-    std::swap(this->mmap_prot_, other.mmap_prot_);
-    std::swap(this->page_size_, other.page_size_);
-    std::swap(this->offset_, other.offset_);
-#else
-    std::swap(this->file_, other.file_);
-#endif
-
-    return *this;
-}
-
 void BinaryFile::read_char(char* data, size_t count) {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
-    if (offset_ + count > file_size_) {
+    if (mmap_offset_ + current_ + count > file_size_) {
         throw file_error(
             "failed to read {} bytes from the file at '{}': mmap out of bounds",
             count, this->path()
         );
     }
-    std::memcpy(data, mmap_data_ + offset_, count);
-    offset_ += count;
+
+    if (current_ + count > CHEMFILES_MMAP_SIZE) {
+        // read remaining data
+        auto read = CHEMFILES_MMAP_SIZE - current_;
+        std::memcpy(data, mmap_data_ + current_, read);
+
+        mmap_offset_ += CHEMFILES_MMAP_SIZE;
+        current_ = 0;
+        this->remap_file();
+        this->read_char(data + read, count - read);
+    } else {
+        std::memcpy(data, mmap_data_ + current_, count);
+        current_ += count;
+    }
+
 #else
     auto read = std::fread(data, 1, count, file_);
     const char* error_info = "unknown cause";
     if (read != count) {
-        if (feof(file_)) {
+        if (feof(file_) != 0) {
             error_info = "reached end of file";
-        }
-        else if (ferror(file_)) {
+        } else if (ferror(file_) != 0) {
             error_info = std::strerror(errno);
         }
         throw file_error(
@@ -258,44 +340,37 @@ void BinaryFile::read_char(char* data, size_t count) {
 
 void BinaryFile::write_char(const char* data, size_t count) {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
-    if (offset_ + count > file_size_) {
-        while (offset_ + count > file_size_) {
-            // increase the file size by multiples of the page size to have to
-            // call ftruncate less often
-            file_size_ += 4 * page_size_;
-        }
-        // resize the file, but keep the same mmap allocation unless
-        // file_size_ > mmap_size_
+    auto file_size_changed = false;
+    while (mmap_offset_ + current_ + count > file_size_) {
+        file_size_ += 4 * page_size_;
+        file_size_changed = true;
+    }
+
+    if (file_size_changed) {
+        // resize the underlying file
         auto status = ftruncate(file_descriptor_, static_cast<off_t>(file_size_));
-        if (status == -1) {
+        if (status != 0) {
             throw file_error("failed to resize file: {}", std::strerror(errno));
         }
+    }
 
-        if (file_size_ > mmap_size_) {
-            // unmap & remap file with bigger mapping
-            msync(mmap_data_, mmap_size_, MS_SYNC);
-            munmap(mmap_data_, mmap_size_);
+    if (current_ + count > CHEMFILES_MMAP_SIZE) {
+        // copy data in the remaining space
+        auto written = CHEMFILES_MMAP_SIZE - current_;
+        std::memcpy(mmap_data_ + current_, data, written);
 
-            while (file_size_ > mmap_size_) {
-                mmap_size_ *= 2;
-            }
-
-            mmap_data_ = static_cast<char*>(mmap(
-                nullptr, mmap_size_, mmap_prot_, MAP_SHARED, file_descriptor_, 0
-            ));
-
-            if (mmap_data_ == MAP_FAILED) {
-                throw file_error("mmap failed (2) for '{}': {}", this->path(), std::strerror(errno));
-            }
+        mmap_offset_ += CHEMFILES_MMAP_SIZE;
+        current_ = 0;
+        this->remap_file();
+        this->write_char(data + written, count - written);
+    } else {
+        if (mmap_offset_ + current_ + count > total_written_size_) {
+            total_written_size_ = mmap_offset_ + current_ + count;
         }
-    }
 
-    if (offset_ + count > total_written_size_) {
-        total_written_size_ = offset_ + count;
+        std::memcpy(mmap_data_ + current_, data, count);
+        current_ += count;
     }
-
-    std::memcpy(mmap_data_ + offset_, data, count);
-    offset_ += count;
 #else
     auto written = std::fwrite(data, 1, count, file_);
     if (written != count) {
@@ -310,27 +385,44 @@ void BinaryFile::write_char(const char* data, size_t count) {
 
 uint64_t BinaryFile::tell() const {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
-    return offset_;
+    return mmap_offset_ + current_;
 #else
-    return static_cast<uint64_t>(ftell64(file_));
+    auto position = ftell64(file_);
+    if (position < 0) {
+        throw file_error("call to ftell failed: {}", std::strerror(errno));
+    }
+    return static_cast<uint64_t>(position);
 #endif
 }
 
 
 void BinaryFile::seek(uint64_t position) {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
-    offset_ = position;
+    if (position < mmap_offset_ || position > mmap_offset_ + CHEMFILES_MMAP_SIZE) {
+        // find a new offset so positions is in the mapped region
+        mmap_offset_ = (position / CHEMFILES_MMAP_SIZE) * CHEMFILES_MMAP_SIZE;
+        this->remap_file();
+    }
+
+    current_ = position - mmap_offset_;
 #else
-    fseek64(file_, static_cast<off64_t>(position), SEEK_SET);
+    auto status = fseek64(file_, static_cast<off64_t>(position), SEEK_SET);
+
+    if (status != 0) {
+        throw file_error("failed to seek in file: {}", std::strerror(errno));
+    }
 #endif
 }
 
 
 void BinaryFile::skip(uint64_t count) {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
-    offset_ += count;
+    this->seek(mmap_offset_ + current_ + count);
 #else
-    fseek64(file_, static_cast<off64_t>(count), SEEK_CUR);
+    auto status = fseek64(file_, static_cast<off64_t>(count), SEEK_CUR);
+    if (status != 0) {
+        throw file_error("failed to seek in file: {}", std::strerror(errno));
+    }
 #endif
 }
 
@@ -339,11 +431,16 @@ uint64_t BinaryFile::file_size() {
 #if CHEMFILES_BINARY_FILE_USE_MMAP
     return total_written_size_;
 #else
-    uint64_t cur_pos = tell();
-    fseek64(file_, 0L, SEEK_END);
-    const uint64_t filesize = tell();
-    seek(cur_pos);
-    return filesize;
+    auto current = this->tell();
+
+    auto status = fseek64(file_, 0L, SEEK_END);
+    if (status != 0) {
+        throw file_error("failed to seek in file: {}", std::strerror(errno));
+    }
+
+    auto file_size = this->tell();
+    this->seek(current);
+    return file_size;
 #endif
 }
 
@@ -383,6 +480,10 @@ uint64_t BinaryFile::file_size() {
    || defined(__x86_64) || defined(__x86_64__) \
    || defined(_M_X64) || defined(__bfin__)
 # define CHEMFILES_BYTE_ORDER CHEMFILES_LITTLE_ENDIAN
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+# define CHEMFILES_BYTE_ORDER CHEMFILES_LITTLE_ENDIAN
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+# define CHEMFILES_BYTE_ORDER CHEMFILES_BIG_ENDIAN
 #else
 # error Unknown target machine endianness
 #endif
@@ -455,7 +556,7 @@ inline uint64_t swap_endianness(uint64_t value) {
 
 template<typename T>
 inline void BigEndianFile::read_as_big_endian(T* data, size_t count) {
-    auto char_data = reinterpret_cast<char*>(data);
+    auto* char_data = reinterpret_cast<char*>(data);
     const size_t byte_count = sizeof(T) * count;
     this->read_char(char_data, byte_count);
 #if CHEMFILES_BYTE_ORDER == CHEMFILES_LITTLE_ENDIAN
@@ -473,12 +574,12 @@ template<typename T>
 inline void BigEndianFile::write_as_big_endian(const T* data, size_t count) {
     const size_t byte_count = sizeof(T) * count;
 #if CHEMFILES_BYTE_ORDER == CHEMFILES_LITTLE_ENDIAN
-    swap_buf_.resize(byte_count);
+    swap_buffer_.resize(byte_count);
     for (size_t i = 0; i < count; ++i) {
         T value = swap_endianness(data[i]);
-        std::memcpy(swap_buf_.data() + i * sizeof(T), &value, sizeof(T));
+        std::memcpy(swap_buffer_.data() + i * sizeof(T), &value, sizeof(T));
     }
-    this->write_char(swap_buf_.data(), byte_count);
+    this->write_char(swap_buffer_.data(), byte_count);
 #else
     this->write_char(reinterpret_cast<const char*>(data), byte_count);
 #endif
@@ -560,7 +661,7 @@ void BigEndianFile::write_f64(const double* data, size_t count) {
 
 template<typename T>
 inline void LittleEndianFile::read_as_little_endian(T* data, size_t count) {
-    auto char_data = reinterpret_cast<char*>(data);
+    auto* char_data = reinterpret_cast<char*>(data);
     const size_t byte_count = sizeof(T) * count;
     this->read_char(char_data, byte_count);
 #if CHEMFILES_BYTE_ORDER == CHEMFILES_BIG_ENDIAN
@@ -578,12 +679,12 @@ template<typename T>
 inline void LittleEndianFile::write_as_little_endian(const T* data, size_t count) {
     const size_t byte_count = sizeof(T) * count;
 #if CHEMFILES_BYTE_ORDER == CHEMFILES_BIG_ENDIAN
-    swap_buf_.resize(byte_count);
+    swap_buffer_.resize(byte_count);
     for (size_t i = 0; i < count; ++i) {
         T value = swap_endianness(data[i]);
-        std::memcpy(swap_buf_.data() + i * sizeof(T), &value, sizeof(T));
+        std::memcpy(swap_buffer_.data() + i * sizeof(T), &value, sizeof(T));
     }
-    this->write_char(swap_buf_.data(), byte_count);
+    this->write_char(swap_buffer_.data(), byte_count);
 #else
     this->write_char(reinterpret_cast<const char*>(data), byte_count);
 #endif
@@ -658,4 +759,14 @@ void LittleEndianFile::write_f32(const float* data, size_t count) {
 
 void LittleEndianFile::write_f64(const double* data, size_t count) {
     write_as_little_endian(data, count);
+}
+
+/******************************************************************************/
+
+std::unique_ptr<BinaryFile> BinaryFile::open_native(std::string path, File::Mode mode) {
+#if CHEMFILES_BYTE_ORDER == CHEMFILES_LITTLE_ENDIAN
+    return std::make_unique<LittleEndianFile>(std::move(path), mode);
+#else
+    return std::make_unique<BigEndianFile>(std::move(path), mode);
+#endif
 }

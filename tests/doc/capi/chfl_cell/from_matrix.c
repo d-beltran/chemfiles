@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include <assert.h>
 
-int main() {
+int main(void) {
     // [example]
-    chfl_vector3d matrix[3] = {
+    const chfl_vector3d matrix[3] = {
         {10, 0, 0},
         {0, 12, 0},
         {0, 0, 15}

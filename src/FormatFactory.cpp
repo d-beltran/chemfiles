@@ -1,9 +1,12 @@
 // Chemfiles, a modern library for chemistry file reading and writing
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
+#include <cstddef>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 #include <algorithm>
 #include <functional>
@@ -19,7 +22,6 @@
 #include "chemfiles/utils.hpp"
 #include "chemfiles/mutex.hpp"
 #include "chemfiles/error_fmt.hpp"
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 #include "chemfiles/formats/Molfile.hpp"
@@ -38,9 +40,11 @@
 #include "chemfiles/formats/mmCIF.hpp"
 #include "chemfiles/formats/CML.hpp"
 #include "chemfiles/formats/SMI.hpp"
+#include "chemfiles/formats/TPR.hpp"
 #include "chemfiles/formats/TRR.hpp"
 #include "chemfiles/formats/XTC.hpp"
 #include "chemfiles/formats/CIF.hpp"
+#include "chemfiles/formats/DCD.hpp"
 #include "chemfiles/formats/BIN.hpp"
 
 #define SENTINEL_INDEX (static_cast<size_t>(-1))
@@ -49,17 +53,16 @@ namespace chemfiles {
     class MemoryBuffer;
     class Format;
 
-    extern template class Molfile<DCD>;
     extern template class Molfile<TRJ>;
     extern template class Molfile<PSF>;
     extern template class Molfile<MOLDEN>;
 }
 using namespace chemfiles;
 
-static unsigned edit_distance(string_view first, string_view second);
-static std::string suggest_names(const std::vector<RegisteredFormat>& formats, string_view name);
-static size_t find_by_name(const std::vector<RegisteredFormat>& formats, string_view name);
-static size_t find_by_extension(const std::vector<RegisteredFormat>& formats, string_view extension);
+static unsigned edit_distance(std::string_view first, std::string_view second);
+static std::string suggest_names(const std::vector<RegisteredFormat>& formats, std::string_view name);
+static size_t find_by_name(const std::vector<RegisteredFormat>& formats, std::string_view name);
+static size_t find_by_extension(const std::vector<RegisteredFormat>& formats, std::string_view extension);
 
 FormatFactory::FormatFactory() {
     // add formats in alphabetic order
@@ -70,7 +73,7 @@ FormatFactory::FormatFactory() {
 #endif
     this->add_format<CMLFormat>();
     this->add_format<CSSRFormat>();
-    this->add_format<Molfile<DCD>>();
+    this->add_format<DCDFormat>();
     this->add_format<GROFormat>();
     this->add_format<LAMMPSTrajectoryFormat>();
     this->add_format<LAMMPSDataFormat>();
@@ -85,6 +88,7 @@ FormatFactory::FormatFactory() {
     this->add_format<TinkerFormat>();
     this->add_format<TNGFormat>();
     this->add_format<Molfile<TRJ>>();
+    this->add_format<TPRFormat>();
     this->add_format<TRRFormat>();
     this->add_format<XTCFormat>();
     this->add_format<XYZFormat>();
@@ -118,11 +122,11 @@ void FormatFactory::register_format(const FormatMetadata& metadata, format_creat
     }
 
     // actually register the format
-    formats.push_back({metadata, creator, memory_stream});
+    formats.push_back({metadata, std::move(creator), std::move(memory_stream)});
 }
 
 void FormatFactory::register_format(const FormatMetadata& metadata, format_creator_t creator) {
-    register_format(metadata, creator,
+    register_format(metadata, std::move(creator),
         [&metadata](std::shared_ptr<MemoryBuffer>, File::Mode, File::Compression) -> std::unique_ptr<Format> {
             throw format_error("in-memory IO is not supported for the '{}' format", metadata.name);
         }
@@ -165,7 +169,7 @@ std::vector<std::reference_wrapper<const FormatMetadata>> FormatFactory::formats
 }
 
 // Compute the edit distance between two strings using Wagner–Fischer algorithm
-unsigned edit_distance(string_view first, string_view second) {
+unsigned edit_distance(std::string_view first, std::string_view second) {
     auto m = first.length() + 1;
     auto n = second.length() + 1;
 
@@ -196,11 +200,11 @@ unsigned edit_distance(string_view first, string_view second) {
    return distances[m - 1][n - 1];
 }
 
-std::string suggest_names(const std::vector<RegisteredFormat>& formats, string_view name) {
+std::string suggest_names(const std::vector<RegisteredFormat>& formats, std::string_view name) {
     auto suggestions = std::vector<std::string>();
-    for (auto& other : formats) {
+    for (const auto& other : formats) {
         if (edit_distance(name, other.metadata.name) < 4) {
-            suggestions.push_back(other.metadata.name);
+            suggestions.emplace_back(other.metadata.name);
         }
     }
 
@@ -223,7 +227,7 @@ std::string suggest_names(const std::vector<RegisteredFormat>& formats, string_v
     return message.str();
 }
 
-size_t find_by_name(const std::vector<RegisteredFormat>& formats, string_view name) {
+size_t find_by_name(const std::vector<RegisteredFormat>& formats, std::string_view name) {
     for (size_t i=0; i<formats.size(); i++) {
         if (formats[i].metadata.name == name) {
             return i;
@@ -232,9 +236,9 @@ size_t find_by_name(const std::vector<RegisteredFormat>& formats, string_view na
     return SENTINEL_INDEX;
 }
 
-size_t find_by_extension(const std::vector<RegisteredFormat>& formats, string_view extension) {
+size_t find_by_extension(const std::vector<RegisteredFormat>& formats, std::string_view extension) {
     for (size_t i=0; i<formats.size(); i++) {
-        auto& format_extension = formats[i].metadata.extension;
+        const auto& format_extension = formats[i].metadata.extension;
         if (format_extension && *format_extension == extension) {
             return i;
         }

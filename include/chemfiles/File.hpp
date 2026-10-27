@@ -4,15 +4,18 @@
 #ifndef CHEMFILES_FILES_HPP
 #define CHEMFILES_FILES_HPP
 
+#include <cstddef>
 #include <cstdint>
+
 #include <string>
+#include <utility>
 #include <vector>
 #include <memory>
+#include <string_view>
 
 #include <fmt/format.h>
 
 #include "chemfiles/exports.h"
-#include "chemfiles/string_view.hpp"
 
 namespace chemfiles {
 
@@ -41,7 +44,7 @@ public:
         LZMA,
     };
 
-    virtual ~File() = default;
+    virtual ~File() noexcept = default;
     File(File&&) = default;
     File& operator=(File&&) = default;
     File(const File&) = delete;
@@ -103,7 +106,7 @@ public:
 
 protected:
     /// Get the string path used to open this file
-    string_view path() const {
+    std::string_view path() const {
         return path_;
     }
 
@@ -171,7 +174,7 @@ public:
     /// an internal buffer, and can be invalidated after another call to
     /// `readline`. If storing the line is necessary, transform it to an owned
     /// string using `string_view::to_string()`.
-    string_view readline();
+    std::string_view readline();
 
     /// Read the full file into an owned string. This is a convenience method
     /// for format that need the full file read before parsing can start.

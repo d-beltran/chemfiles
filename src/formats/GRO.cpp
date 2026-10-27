@@ -2,6 +2,7 @@
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cassert>
 
@@ -9,13 +10,13 @@
 #include <array>
 #include <string>
 #include <vector>
+#include <string_view>
 
 #include "chemfiles/types.hpp"
 #include "chemfiles/utils.hpp"
 #include "chemfiles/parse.hpp"
 #include "chemfiles/warnings.hpp"
 #include "chemfiles/error_fmt.hpp"
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 #include "chemfiles/File.hpp"
@@ -51,7 +52,7 @@ template<> const FormatMetadata& chemfiles::format_metadata<GROFormat>() {
     return metadata;
 }
 
-using chemfiles::private_details::is_upper_triangular;
+using chemfiles::details::is_lower_triangular;
 
 /// Check the number of digits before the decimal separator to be sure than
 /// we can represent them. In case of error, use the given `context` in the error
@@ -64,7 +65,7 @@ void GROFormat::read_next(Frame& frame) {
     // GRO comment line is used as frame name
     auto frame_name = trim(file_.readline());
     if (!frame_name.empty()) {
-        frame.set("name", frame_name.to_string());
+        frame.set("name", std::string(frame_name));
     }
 
     size_t natoms = 0;
@@ -91,15 +92,17 @@ void GROFormat::read_next(Frame& frame) {
             warning("GRO Reader", "skiping invalid residue with resid '{}'", line.substr(0, 5));
         }
 
-        auto resname = trim(line.substr(5, 5)).to_string();
-        auto name = trim(line.substr(10, 5)).to_string();
+        auto resname = std::string(trim(line.substr(5, 5)));
+        auto name = std::string(trim(line.substr(10, 5)));
 
         // GRO files store atoms in nanometer, we need to convert to Angstroms
         auto x = parse<double>(line.substr(20, 8)) * 10;
         auto y = parse<double>(line.substr(28, 8)) * 10;
         auto z = parse<double>(line.substr(36, 8)) * 10;
 
-        double vx = 0, vy = 0, vz=0;
+        double vx = 0;
+        double vy = 0;
+        double vz = 0;
         if (line.length() >= 68) {
             vx = parse<double>(line.substr(44, 8)) * 10;
             vy = parse<double>(line.substr(52, 8)) * 10;
@@ -149,9 +152,9 @@ void GROFormat::read_next(Frame& frame) {
         auto v3_y = parse<double>(box_values[8]) * 10;
 
         auto cell = UnitCell({
-            v1_x, v2_x, v3_x,
-            0.00, v2_y, v3_y,
-            0.00, 0.00, v3_z
+            v1_x, 0.00, 0.00,
+            v2_x, v2_y, 0.00,
+            v3_x, v3_y, v3_z
         });
         frame.set_cell(cell);
     }
@@ -188,7 +191,7 @@ void GROFormat::write_next(const Frame& frame) {
         }
     }
 
-    auto& positions = frame.positions();
+    const auto& positions = frame.positions();
     for (size_t i = 0; i < frame.size(); i++) {
         std::string resname = "XXXXX";
         std::string resid = "-1";
@@ -254,14 +257,14 @@ void GROFormat::write_next(const Frame& frame) {
         file_.print("   {:8.5f} {:8.5f} {:8.5f}\n", lengths[0], lengths[1], lengths[2]);
     } else { // Triclinic
         const auto& matrix = cell.matrix() / 10;
-        if (!is_upper_triangular(matrix)) {
-            throw format_error("unsupported triclinic but non upper-triangular cell matrix in GRO writer");
+        if (!is_lower_triangular(matrix)) {
+            throw format_error("unsupported triclinic but non lower-triangular cell matrix in GRO writer");
         }
         check_values_size(Vector3D(matrix[0][0], matrix[1][1], matrix[2][2]), 8, "unit cell");
-        check_values_size(Vector3D(matrix[0][1], matrix[0][2], matrix[1][2]), 8, "unit cell");
+        check_values_size(Vector3D(matrix[1][0], matrix[2][0], matrix[2][1]), 8, "unit cell");
         file_.print(
             "   {:8.5f} {:8.5f} {:8.5f} 0.0 0.0 {:8.5f} 0.0 {:8.5f} {:8.5f}\n",
-            matrix[0][0], matrix[1][1], matrix[2][2], matrix[0][1], matrix[0][2], matrix[1][2]
+            matrix[0][0], matrix[1][1], matrix[2][2], matrix[1][0], matrix[2][0], matrix[2][1]
         );
     }
 }

@@ -20,13 +20,13 @@
         public:
             BINFormat(std::string path, File::Mode mode, File::Compression compression);
 
-            void read_step(size_t step, Frame& frame) override;
+            void read_at(size_t index, Frame& frame) override;
             void read(Frame& frame) override;
-            size_t nsteps() override;
+            size_t size() override;
             void set_natoms(size_t natoms) override;
 
-            size_t n_atoms;
-            size_t bytes_per_frame;
+            size_t n_atoms = 0;
+            size_t bytes_per_frame = 0;
 
         private:
             /// Associated binary file

@@ -2,17 +2,19 @@
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+
 #include <array>
 #include <string>
 #include <vector>
+#include <string_view>
 
 #include "chemfiles/types.hpp"
 #include "chemfiles/utils.hpp"
 #include "chemfiles/parse.hpp"
 #include "chemfiles/error_fmt.hpp"
 #include "chemfiles/sorted_set.hpp"
-#include "chemfiles/string_view.hpp"
 #include "chemfiles/external/optional.hpp"
 
 #include "chemfiles/File.hpp"
@@ -21,6 +23,7 @@
 #include "chemfiles/Topology.hpp"
 #include "chemfiles/UnitCell.hpp"
 #include "chemfiles/Connectivity.hpp"
+#include "chemfiles/Format.hpp"
 #include "chemfiles/FormatMetadata.hpp"
 
 #include "chemfiles/formats/Tinker.hpp"
@@ -47,7 +50,7 @@ template<> const FormatMetadata& chemfiles::format_metadata<TinkerFormat>() {
     return metadata;
 }
 
-static bool is_unit_cell_line(string_view line);
+static bool is_unit_cell_line(std::string_view line);
 
 void TinkerFormat::read_next(Frame& frame) {
     auto line = file_.readline();
@@ -62,7 +65,8 @@ void TinkerFormat::read_next(Frame& frame) {
     line = file_.readline();
     if (is_unit_cell_line(line)) {
         // Read the cell
-        Vector3D lengths, angles;
+        Vector3D lengths;
+        Vector3D angles;
         scan(line, lengths[0], lengths[1], lengths[2], angles[0], angles[1], angles[2]);
         frame.set_cell({lengths, angles});
     } else {
@@ -71,8 +75,11 @@ void TinkerFormat::read_next(Frame& frame) {
 
     for (size_t i = 0; i < n_atoms; i++) {
         line = file_.readline();
-        double x = 0, y = 0, z = 0;
-        int id = 0, atom_type = 0;
+        double x = 0;
+        double y = 0;
+        double z = 0;
+        int id = 0;
+        int atom_type = 0;
         std::string name;
         auto count = scan(line, id, name, x, y, z, atom_type);
 
@@ -96,28 +103,28 @@ void TinkerFormat::write_next(const Frame& frame) {
     auto lengths = frame.cell().lengths();
     auto angles = frame.cell().angles();
     file_.print("{} written by the chemfiles library\n", frame.size());
-    file_.print("{:#} {:#} {:#} {:#} {:#} {:#}\n",
+    file_.print("{:#g} {:#g} {:#g} {:#g} {:#g} {:#g}\n",
         lengths[0], lengths[1], lengths[2], angles[0], angles[1], angles[2]
     );
 
-    auto& topology = frame.topology();
+    const auto& topology = frame.topology();
     // Build type index numbering. type_id will be searched for each atom type,
     // and the position can be used a an unique integer identifier for the atom
     // type.
     auto types_id = sorted_set<std::string>();
-    for (auto& atom: topology) {
+    for (const auto& atom: topology) {
         types_id.insert(atom.type());
     }
 
     // Build bonds index. It will contains all atoms bonded to the atom i in
     // bonded_to[i].
     auto bonded_to = std::vector<std::vector<size_t>>(frame.size());
-    for (auto& bond: topology.bonds()) {
+    for (const auto& bond: topology.bonds()) {
         bonded_to[bond[0]].push_back(bond[1]);
         bonded_to[bond[1]].push_back(bond[0]);
     }
 
-    auto& positions = frame.positions();
+    const auto& positions = frame.positions();
     for (size_t i = 0; i < frame.size(); i++) {
         auto name = topology[i].name();
         if (name.empty()) {
@@ -127,7 +134,7 @@ void TinkerFormat::write_next(const Frame& frame) {
         assert(it != types_id.end());
         auto type = (it - types_id.begin()) + 1;
 
-        file_.print("{} {} {:#} {:#} {:#} {}",
+        file_.print("{} {} {:#g} {:#g} {:#g} {}",
             i + 1, name, positions[i][0], positions[i][1], positions[i][2], type
         );
         for (size_t other: bonded_to[i]) {
@@ -179,7 +186,7 @@ optional<uint64_t> TinkerFormat::forward() {
 
 // This is how tinker does it to check if there is unit cell information
 // in the file, so let's follow them here.
-bool is_unit_cell_line(string_view line) {
+bool is_unit_cell_line(std::string_view line) {
     static const char* LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     return line.find_first_of(LETTERS) == std::string::npos;
 }

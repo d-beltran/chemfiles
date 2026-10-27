@@ -2,18 +2,19 @@
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
 #include <chemfiles.h>
+#include <assert.h>
 
-int main() {
-    // [example] [no-run]
-    CHFL_TRAJECTORY* trajectory = chfl_trajectory_open("water.xyz", 'r');
+int main(void) {
+    // [example]
     CHFL_FRAME* frame = chfl_frame();
 
-    chfl_trajectory_read_step(trajectory, 42, frame);
+    chfl_frame_set_index(frame, 678);
 
-    /* We can use the 42nd frame here */
+    uint64_t index = 0;
+    chfl_frame_index(frame, &index);
+    assert(index == 678);
 
     chfl_free(frame);
-    chfl_trajectory_close(trajectory);
     // [example]
     return 0;
 }

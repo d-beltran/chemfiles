@@ -6,7 +6,6 @@
 
 #include <string>
 #include <vector>
-#include <functional>
 
 #include "chemfiles/config.h"
 #include "chemfiles/capi/types.h"
@@ -24,7 +23,7 @@ using namespace chemfiles;
 
 static_assert(sizeof(chfl_status) == sizeof(int), "Wrong size for chfl_status enum");
 
-static CHFL_THREAD_LOCAL std::string CAPI_LAST_ERROR;
+static thread_local std::string CAPI_LAST_ERROR;
 
 void chemfiles::set_last_error(const std::string& message) {
     CAPI_LAST_ERROR = message;

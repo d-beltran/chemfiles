@@ -1,12 +1,22 @@
 // Chemfiles, a modern library for chemistry file reading and writing
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
+
 #include <cassert>
-#include <iostream>
+#include <cstddef>
+#include <cstdint>
+
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "chemfiles/File.hpp"
 #include "chemfiles/files/Netcdf3File.hpp"
 
 #include "chemfiles/error_fmt.hpp"
+#include "chemfiles/external/optional.hpp"
+#include "chemfiles/files/BinaryFile.hpp"
 #include "chemfiles/unreachable.hpp"
 
 using namespace chemfiles;
@@ -29,9 +39,6 @@ template<> struct nc_type_info<char> {
     static constexpr void(Netcdf3File::*writer)(const char*, size_t)
         = static_cast<void (Netcdf3File::*)(const char*, size_t)>(&Netcdf3File::write_char);
 };
-constexpr const char* nc_type_info<char>::name;
-constexpr void(Netcdf3File::*nc_type_info<char>::reader)(char*, size_t);
-constexpr void(Netcdf3File::*nc_type_info<char>::writer)(const char*, size_t);
 
 template<> struct nc_type_info<int8_t> {
     static constexpr int32_t nc_type = constants::NC_BYTE;
@@ -42,9 +49,6 @@ template<> struct nc_type_info<int8_t> {
     static constexpr void(Netcdf3File::*writer)(const int8_t*, size_t)
         = static_cast<void (Netcdf3File::*)(const int8_t*, size_t)>(&Netcdf3File::write_i8);
 };
-constexpr const char* nc_type_info<int8_t>::name;
-constexpr void(Netcdf3File::*nc_type_info<int8_t>::reader)(int8_t*, size_t);
-constexpr void(Netcdf3File::*nc_type_info<int8_t>::writer)(const int8_t*, size_t);
 
 template<> struct nc_type_info<int16_t> {
     static constexpr int32_t nc_type = constants::NC_SHORT;
@@ -53,9 +57,6 @@ template<> struct nc_type_info<int16_t> {
     static constexpr void(Netcdf3File::*reader)(int16_t*, size_t) = &Netcdf3File::read_i16;
     static constexpr void(Netcdf3File::*writer)(const int16_t*, size_t) = &Netcdf3File::write_i16;
 };
-constexpr const char* nc_type_info<int16_t>::name;
-constexpr void(Netcdf3File::*nc_type_info<int16_t>::reader)(int16_t*, size_t);
-constexpr void(Netcdf3File::*nc_type_info<int16_t>::writer)(const int16_t*, size_t);
 
 template<> struct nc_type_info<int32_t> {
     static constexpr int32_t nc_type = constants::NC_INT;
@@ -64,9 +65,6 @@ template<> struct nc_type_info<int32_t> {
     static constexpr void(Netcdf3File::*reader)(int32_t*, size_t) = &Netcdf3File::read_i32;
     static constexpr void(Netcdf3File::*writer)(const int32_t*, size_t) = &Netcdf3File::write_i32;
 };
-constexpr const char* nc_type_info<int32_t>::name;
-constexpr void(Netcdf3File::*nc_type_info<int32_t>::reader)(int32_t*, size_t);
-constexpr void(Netcdf3File::*nc_type_info<int32_t>::writer)(const int32_t*, size_t);
 
 template<> struct nc_type_info<float> {
     static constexpr int32_t nc_type = constants::NC_FLOAT;
@@ -75,9 +73,6 @@ template<> struct nc_type_info<float> {
     static constexpr void(Netcdf3File::*reader)(float*, size_t) = &Netcdf3File::read_f32;
     static constexpr void(Netcdf3File::*writer)(const float*, size_t) = &Netcdf3File::write_f32;
 };
-constexpr const char* nc_type_info<float>::name;
-constexpr void(Netcdf3File::*nc_type_info<float>::reader)(float*, size_t);
-constexpr void(Netcdf3File::*nc_type_info<float>::writer)(const float*, size_t);
 
 template<> struct nc_type_info<double> {
     static constexpr int32_t nc_type = constants::NC_DOUBLE;
@@ -86,14 +81,14 @@ template<> struct nc_type_info<double> {
     static constexpr void(Netcdf3File::*reader)(double*, size_t) = &Netcdf3File::read_f64;
     static constexpr void(Netcdf3File::*writer)(const double*, size_t) = &Netcdf3File::write_f64;
 };
-constexpr const char* nc_type_info<double>::name;
-constexpr void(Netcdf3File::*nc_type_info<double>::reader)(double*, size_t);
-constexpr void(Netcdf3File::*nc_type_info<double>::writer)(const double*, size_t);
 
 /******************************************************************************/
 
-Value& Value::operator=(Value&& other) {
-    this->~Value();
+Value& Value::operator=(Value&& other) noexcept {
+    if (kind_ == kind_t::STRING) {
+        using std::string;
+        string_.~string();
+    }
 
     this->kind_ = other.kind_;
     if (kind_ == kind_t::BYTE) {
@@ -118,7 +113,10 @@ Value& Value::operator=(Value&& other) {
 }
 
 Value& Value::operator=(const Value& other) {
-    this->~Value();
+    if (kind_ == kind_t::STRING) {
+        using std::string;
+        string_.~string();
+    }
 
     this->kind_ = other.kind_;
     if (kind_ == kind_t::BYTE) {
@@ -207,7 +205,7 @@ double Value::as_f64() const {
 }
 
 size_t VariableLayout::count() const {
-    return static_cast<uint64_t>(this->size) / static_cast<uint64_t>(sizeof_nc_type(this->type));
+    return static_cast<size_t>(this->size) / static_cast<size_t>(sizeof_nc_type(this->type));
 }
 
 std::string VariableLayout::type_name() const {
@@ -240,7 +238,7 @@ Variable::Variable(
     file_(file),
     dimensions_(std::move(dimensions)),
     attributes_(std::move(attributes)),
-    layout_(std::move(layout))
+    layout_(layout)
 {
     auto size_from_file = layout_.size_with_padding;
     // the size coming from the file (in layout) is not reliable since it can
@@ -400,11 +398,7 @@ void Variable::write_fill_value(size_t step) {
 /******************************************************************************/
 
 Netcdf3File::Netcdf3File(std::string filename, File::Mode mode):
-    BigEndianFile(std::move(filename), mode),
-    dimensions_(),
-    attributes_(),
-    variables_(),
-    initialized_(false)
+    BigEndianFile(std::move(filename), mode)
 {
     if (mode == File::WRITE) {
         // nothing to do for now, the file will be intialized by a Netcdf3Builder
@@ -415,7 +409,7 @@ Netcdf3File::Netcdf3File(std::string filename, File::Mode mode):
     auto buffer = std::string(3, '\0');
 
     try {
-        this->read_char(&buffer[0], 3);
+        this->read_char(buffer.data(), 3);
     } catch (const FileError& e) {
         if (mode == File::APPEND) {
             // An empty file was opened in append mode, it will be initialized
@@ -430,11 +424,26 @@ Netcdf3File::Netcdf3File(std::string filename, File::Mode mode):
     }
 
     char version = this->read_single_char();
-    if (version != 2) {
+    if (version != 2 && version != 5) {
         throw file_error("only 64-bit netcdf3 files are supported");
     }
 
-    this->n_records_ = static_cast<size_t>(this->read_single_i32());
+    if (version == 5) {
+        this->use_64bit_header_ = true;
+        if (mode != 'r') {
+            throw file_error(
+                "file at '{}' can not be written, only read: "
+                "64-bit headers are not supported when writting", this->path()
+            );
+        }
+    }
+
+
+    if (this->use_64bit_header_) {
+        this->n_records_ = this->read_single_u64();
+    } else {
+        this->n_records_ = static_cast<uint64_t>(this->read_single_i32());
+    }
 
     // read dimensions
     auto header = this->read_single_i32();
@@ -444,11 +453,28 @@ Netcdf3File::Netcdf3File(std::string filename, File::Mode mode):
             header
         );
     }
-    auto count = this->read_single_i32();
 
-    for (int i=0; i<count; i++) {
+    int64_t count = 0;
+    if (this->use_64bit_header_) {
+        count = this->read_single_i64();
+    } else {
+        count = this->read_single_i32();
+    }
+
+    for (int64_t i=0; i<count; i++) {
         auto name = this->read_pascal_string();
-        auto size = this->read_single_i32();
+        int32_t size = 0;
+        if (this->use_64bit_header_) {
+            auto real_size = this->read_single_i64();
+            if (real_size >= INT32_MAX) {
+                throw file_error(
+                    "dimensions ({}) larger than 32-bit integer are not supported", name
+                );
+            }
+            size = static_cast<int32_t>(real_size);
+        } else {
+            size = this->read_single_i32();
+        }
         dimensions_.push_back(std::make_shared<Dimension>(std::move(name), size));
     }
 
@@ -465,7 +491,7 @@ Netcdf3File::~Netcdf3File() {
             auto& variable = it.second;
             if (variable.is_record()) {
                 if (!variable.written_at_last_step_ && this->n_records_ > 0) {
-                    variable.write_fill_value(this->n_records_ - 1);
+                    variable.write_fill_value(static_cast<size_t>(this->n_records_ - 1));
                 }
             } else {
                 if (!variable.written_at_last_step_) {
@@ -474,15 +500,18 @@ Netcdf3File::~Netcdf3File() {
             }
         }
 
-        // update the number of records in the header, it is always at byte 4
-        // DANI: We can not update the begining of the file at this point since we may be streaming
-        // this->seek(4);
-        // this->write_single_i32(static_cast<int32_t>(this->n_records_));
+        // update the number of records in the header, it is always at byte 4.
+        // This is not possible when streaming to stdout, in which case the
+        // number of records must be set before initializing the file.
+        if (!this->is_stream()) {
+            this->seek(4);
+            this->write_single_i32(static_cast<int32_t>(this->n_records_));
+        }
     }
 }
 
 void Netcdf3File::skip_padding(int64_t size) {
-    const auto count = static_cast<uint64_t>(padding(size));
+    auto count = static_cast<uint64_t>(padding(size));
     this->skip(count);
 }
 
@@ -493,9 +522,14 @@ void Netcdf3File::add_padding(int64_t size) {
 }
 
 std::string Netcdf3File::read_pascal_string() {
-    auto size = static_cast<size_t>(this->read_single_i32());
+    size_t size = 0;
+    if (this->use_64bit_header_) {
+        size = static_cast<size_t>(this->read_single_i64());
+    } else {
+        size = static_cast<size_t>(this->read_single_i32());
+    }
     auto value = std::string(size, '\0');
-    this->read_char(&value[0], size);
+    this->read_char(value.data(), size);
     this->skip_padding(static_cast<int64_t>(size));
     return value;
 }
@@ -517,10 +551,16 @@ std::map<std::string, Value> Netcdf3File::read_attributes() {
             header
         );
     }
-    auto count = this->read_single_i32();
+
+    int64_t count = 0;
+    if (this->use_64bit_header_) {
+        count = this->read_single_i64();
+    } else {
+        count = this->read_single_i32();
+    }
 
     auto attributes = std::map<std::string, Value>();
-    for (int i=0; i<count; i++) {
+    for (int64_t i=0; i<count; i++) {
         auto name = this->read_pascal_string();
         auto value = this->read_attribute_value();
         attributes.emplace(std::move(name), std::move(value));
@@ -531,7 +571,13 @@ std::map<std::string, Value> Netcdf3File::read_attributes() {
 
 Value Netcdf3File::read_attribute_value() {
     auto type = this->read_single_i32();
-    auto count = static_cast<size_t>(this->read_single_i32());
+
+    size_t count = 0;
+    if (this->use_64bit_header_) {
+        count = static_cast<size_t>(this->read_single_i64());
+    } else {
+        count = static_cast<size_t>(this->read_single_i32());
+    }
 
     if (count != 1 && type != constants::NC_CHAR) {
         throw file_error("not implemented: attributes with more than one value");
@@ -544,8 +590,8 @@ Value Netcdf3File::read_attribute_value() {
         value = Value(this->read_single_char());
     } else if (type == constants::NC_CHAR) {
         size = sizeof(char);
-        auto str = std::string(static_cast<size_t>(count), '\0');
-        this->read_char(&str[0], count);
+        auto str = std::string(count, '\0');
+        this->read_char(str.data(), count);
         // should we remove trailing NULL if there is any?
         value = Value(std::move(str));
     } else if (type == constants::NC_SHORT) {
@@ -611,7 +657,7 @@ void Netcdf3File::write_attribute_value(const Value& value) {
         size = sizeof(char);
         this->write_single_i32(constants::NC_CHAR);
 
-        auto str = value.as_string();
+        const auto& str = value.as_string();
         count = str.size();
 
         // we don't want NULL in strings
@@ -633,15 +679,33 @@ void Netcdf3File::read_variables() {
             header
         );
     }
-    auto count = this->read_single_i32();
 
-    for (int var_i=0; var_i<count; var_i++) {
+    int64_t count = 0;
+    if (this->use_64bit_header_) {
+        count = this->read_single_i64();
+    } else {
+        count = this->read_single_i32();
+    }
+
+    for (int64_t var_i=0; var_i<count; var_i++) {
         auto name = this->read_pascal_string();
 
-        auto n_dims = this->read_single_i32();
+        int32_t n_dims = 0;
+        if (this->use_64bit_header_) {
+            auto real_n_dims = this->read_single_i64();
+            assert(real_n_dims < INT32_MAX);
+            n_dims = static_cast<int32_t>(real_n_dims);
+        } else {
+            n_dims = this->read_single_i32();
+        }
         auto dimensions = std::vector<std::shared_ptr<Dimension>>();
         for (int i=0; i<n_dims; i++) {
-            auto id = static_cast<size_t>(this->read_single_i32());
+            size_t id = 0;
+            if (this->use_64bit_header_) {
+                id = static_cast<size_t>(this->read_single_i64());
+            } else {
+                id = static_cast<size_t>(this->read_single_i32());
+            }
 
             auto dimension = this->dimensions_[id];
             dimensions.emplace_back(dimension);
@@ -650,7 +714,12 @@ void Netcdf3File::read_variables() {
         auto attributes = this->read_attributes();
 
         auto type = this->read_single_i32();
-        auto size_with_padding = this->read_single_i32();
+        int64_t size_with_padding = 0;
+        if (this->use_64bit_header_) {
+            size_with_padding = this->read_single_i64();
+        } else {
+            size_with_padding = this->read_single_i32();
+        }
         // this is where the 64-bit offset changes something to the format
         // auto offset = this->read_single_i32();
         auto offset = this->read_single_i64();
@@ -707,7 +776,7 @@ void Netcdf3File::add_record() {
         auto& variable = it.second;
         if (variable.is_record()) {
             if (!variable.written_at_last_step_ && this->n_records_ > 1) {
-                variable.write_fill_value(this->n_records_ - 2);
+                variable.write_fill_value(static_cast<size_t>(this->n_records_ - 2));
             }
             variable.written_at_last_step_ = false;
         }
@@ -766,14 +835,13 @@ void Netcdf3Builder::add_variable(std::string name, VariableDefinition definitio
         }
     }
 
-    if (!(definition.type == constants::NC_CHAR ||
-          definition.type == constants::NC_BYTE ||
-          definition.type == constants::NC_SHORT ||
-          definition.type == constants::NC_INT ||
-          definition.type == constants::NC_FLOAT ||
-          definition.type == constants::NC_DOUBLE)
-        )
-    {
+    if (definition.type != constants::NC_CHAR
+        && definition.type != constants::NC_BYTE
+        && definition.type != constants::NC_SHORT
+        && definition.type != constants::NC_INT
+        && definition.type != constants::NC_FLOAT
+        && definition.type != constants::NC_DOUBLE
+    ) {
         throw file_error("invalid type for variable '{}'", name);
     }
 
@@ -816,7 +884,7 @@ void Netcdf3Builder::initialize(Netcdf3File* file) && {
     file->write_single_i32(constants::NC_VARIABLE);
     file->write_single_i32(static_cast<int32_t>(variables_.size()));
     for (auto it: std::move(variables_)) {
-        auto name = std::move(it.first);
+        auto name = it.first;
         auto variable = std::move(it.second);
 
         file->write_pascal_string(name);
@@ -824,15 +892,12 @@ void Netcdf3Builder::initialize(Netcdf3File* file) && {
 
         // write variable dimensions
         auto dimensions = std::vector<std::shared_ptr<Dimension>>();
-        bool is_record_variable = false;
         file->write_single_i32(static_cast<int32_t>(variable.dimensions.size()));
         for (const auto& id: variable.dimensions) {
             file->write_single_i32(static_cast<int32_t>(id));
 
             auto dimension = dimensions_[id];
-            if (dimension->is_record()) {
-                is_record_variable = true;
-            } else {
+            if (!dimension->is_record()) {
                 size_with_padding *= dimension->size;
             }
 

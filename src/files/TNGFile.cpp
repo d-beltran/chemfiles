@@ -1,10 +1,16 @@
 // Chemfiles, a modern library for chemistry file reading and writing
 // Copyright (C) Guillaume Fraux and contributors -- BSD license
 
-#include "chemfiles/files/TNGFile.hpp"
+#include <string>
+#include <utility>
 
+#include <tng/tng_io.h>
+
+#include "chemfiles/File.hpp"
 #include "chemfiles/utils.hpp"
 #include "chemfiles/error_fmt.hpp"
+
+#include "chemfiles/files/TNGFile.hpp"
 
 using namespace chemfiles;
 
@@ -56,6 +62,6 @@ void chemfiles::check_tng_error(tng_function_status status, const std::string& f
         // Do nothing, this is good
         break;
     default:
-        throw file_error("unknown status code from TNG library: {}", status);
+        throw file_error("unknown status code from TNG library: {}", static_cast<int>(status));
     }
 }

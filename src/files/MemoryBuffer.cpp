@@ -36,12 +36,15 @@ MemoryBuffer::MemoryBuffer(size_t initial):
 }
 
 
-MemoryBuffer::MemoryBuffer(MemoryBuffer&& other): MemoryBuffer(nullptr, 0) {
+MemoryBuffer::MemoryBuffer(MemoryBuffer&& other) noexcept: MemoryBuffer(nullptr, 0) {
     *this = std::move(other);
 }
 
-MemoryBuffer& MemoryBuffer::operator=(MemoryBuffer&& other) {
-    this->~MemoryBuffer();
+MemoryBuffer& MemoryBuffer::operator=(MemoryBuffer&& other) noexcept {
+    if (this->is_owned()) {
+        std::free(this->ptr_);
+    }
+
     this->ptr_ = other.ptr_;
     this->len_ = other.len_;
     this->capacity_ = other.capacity_;

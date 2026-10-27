@@ -1,14 +1,10 @@
-#!/usr/bin/env python
-# -*- coding: utf8 -*-
 """
 Check that all error messages are formatted the same way.
 """
-from __future__ import print_function
-import os
-import sys
 import glob
+import os
 import re
-import codecs
+import sys
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 ERRORS = 0
@@ -19,6 +15,7 @@ ALLOWED = [
     "found deprecated configuration file at '{}', please rename it to .chemfiles.toml",
     "could not find _atom_site.type_symbol in '{}'",
     "could not find _atom_site.Cartn_x in '{}'",
+    "unable to guess unit cell convention. The cell is stored as [{} {} {} {} {} {}]",
 ]
 
 
@@ -78,10 +75,10 @@ def check_message(path, line, message):
 
 
 def check_file(path):
-    with codecs.open(path, encoding="utf8") as fd:
+    with open(path, encoding="utf8") as fd:
         lines = list(fd)
 
-    for (i, line) in enumerate(lines):
+    for i, line in enumerate(lines):
         # ignore comments
         if line.strip().startswith("//"):
             continue
