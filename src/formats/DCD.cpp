@@ -131,6 +131,12 @@ DCDFormat::DCDFormat(std::string path, File::Mode mode, File::Compression compre
         throw format_error("unable to open '{}': {}", path, e.what());
     }
 
+    if (mode == File::WRITE && file_->is_stream()) {
+        // the writer seeks backward to update the header after the first
+        // frames, keep them in memory until the header is final
+        file_->buffer_stream();
+    }
+
     if (mode == File::WRITE || (mode == File::APPEND && file_->file_size() == 0)) {
         return;
     }
@@ -155,8 +161,28 @@ DCDFormat::DCDFormat(std::string path, File::Mode mode, File::Compression compre
     }
 }
 
+DCDFormat::~DCDFormat() {
+    if (file_ && file_->is_stream() && file_->mode() == File::WRITE && n_frames_ != expected_n_frames_) {
+        warning("DCD writer",
+            "{} frames were announced in the header of '{}', but only {} "
+            "were written: the file is corrupted",
+            expected_n_frames_, file_->path(), n_frames_
+        );
+    }
+}
+
 size_t DCDFormat::size() {
     return n_frames_;
+}
+
+void DCDFormat::set_size(size_t size) {
+    if (file_->mode() != File::WRITE) {
+        throw format_error("the number of frames can only be set when writing DCD files");
+    }
+    if (n_frames_ != 0) {
+        throw format_error("the number of frames must be set before writing the first frame");
+    }
+    expected_n_frames_ = size;
 }
 
 void DCDFormat::read(Frame& frame) {
@@ -502,6 +528,21 @@ void DCDFormat::read_fixed_coordinates() {
 /******************************************************************************/
 
 void DCDFormat::write(const Frame& frame) {
+    if (file_->is_stream() && n_frames_ >= expected_n_frames_) {
+        if (expected_n_frames_ == 0) {
+            throw format_error(
+                "the number of frames must be set before writing DCD to "
+                "a stream ('{}'), since the header can not be updated afterwards",
+                file_->path()
+            );
+        }
+        throw format_error(
+            "can not write more than {} frames to '{}': this is the number "
+            "of frames announced in the header",
+            expected_n_frames_, file_->path()
+        );
+    }
+
     if (n_frames_ == 0) {
         // initialize data that will be constant for this file
         n_atoms_ = frame.size();
@@ -562,6 +603,19 @@ void DCDFormat::write(const Frame& frame) {
     // back-patch the header: number of frames (always) and, for the first
     // two property-bearing frames, the timestep metadata
     auto current = file_->tell();
+    if (file_->is_stream()) {
+        // the number of frames was already written in the header. The
+        // timestep metadata can only be patched while the header is still
+        // buffered, i.e. during the first two frames
+        if (n_frames_ <= 2) {
+            this->patch_timesteps_metadata(frame);
+            file_->seek(current);
+        }
+        if (n_frames_ >= 2) {
+            file_->flush_stream(current);
+        }
+        return;
+    }
     file_->seek(8); // the number of frames is always at offset 8 (1 marker + CORD)
     file_->write_single_i32(static_cast<int32_t>(n_frames_));
     this->patch_timesteps_metadata(frame);
@@ -605,7 +659,9 @@ void DCDFormat::write_header() {
     this->write_marker(84);
 
     file_->write_char("CORD", 4);
-    file_->write_single_i32(static_cast<int32_t>(n_frames_));
+    // streams can not be back-patched, write the final number of frames now
+    auto n_frames = file_->is_stream() ? expected_n_frames_ : n_frames_;
+    file_->write_single_i32(static_cast<int32_t>(n_frames));
     file_->write_single_i32(static_cast<int32_t>(timesteps_.start));
     file_->write_single_i32(static_cast<int32_t>(timesteps_.step));
 

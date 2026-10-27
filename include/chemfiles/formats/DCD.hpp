@@ -57,8 +57,18 @@ class FormatMetadata;
 class DCDFormat final: public Format {
 public:
     DCDFormat(std::string path, File::Mode mode, File::Compression compression);
+    ~DCDFormat() override;
+
+    DCDFormat(const DCDFormat&) = delete;
+    DCDFormat& operator=(const DCDFormat&) = delete;
+    DCDFormat(DCDFormat&&) = delete;
+    DCDFormat& operator=(DCDFormat&&) = delete;
 
     size_t size() override;
+    /// Set the number of frames that will be written to this file. This is
+    /// required when writing to a stream (stdout), since the number of frames
+    /// is stored in the header and the header can not be updated afterwards.
+    void set_size(size_t size) override;
     void read(Frame& frame) override;
     void read_at(size_t index, Frame& frame) override;
     void write(const Frame& frame) override;
@@ -137,6 +147,8 @@ private:
 
     /// total number of frames in the file
     size_t n_frames_ = 0;
+    /// number of frames announced with `set_size`, only used for streams
+    size_t expected_n_frames_ = 0;
     /// simulation timestep metadata
     struct {
         double dt = 0;
