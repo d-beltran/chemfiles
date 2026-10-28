@@ -211,7 +211,7 @@ jobs:
 
       - name: upload coverage
         uses: codecov/codecov-action@v5
-        if: matrix.collect-coverage
+        if: matrix.collect-coverage && github.repository == 'chemfiles/chemfiles'
         with:
           fail_ci_if_error: true
           verbose: true
